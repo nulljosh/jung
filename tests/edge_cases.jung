@@ -1,0 +1,121 @@
+# Edge cases: empty strings, negatives, booleans, nested access, escapes,
+# zero division (guarded), large numbers, nested calls, variable shadowing
+
+# --- Empty string operations ---
+perceive s = ""
+project s
+project len(s)
+project s + "hello"
+project "hello" + s
+project s == ""
+project s == "x"
+
+# --- Negative number arithmetic ---
+project -1 + -2
+project -10 * -3
+project -10 / 2
+project -10 / -5
+project -7 % 3
+project 7 % -3
+project abs(-42)
+perceive neg = -100
+project neg + 50
+project neg * -1
+
+# --- Boolean coercion edge cases ---
+# 0 and "" are falsy; 1, "x", [1] are truthy; null and [] are falsy
+project 0 ? "truthy" : "falsy"
+project 1 ? "truthy" : "falsy"
+project "" ? "truthy" : "falsy"
+project "x" ? "truthy" : "falsy"
+project null ? "truthy" : "falsy"
+project [] ? "truthy" : "falsy"
+project [1] ? "truthy" : "falsy"
+project not 0
+project not 1
+project not null
+
+# --- Deeply nested object access ---
+perceive deep = {a: {b: {c: {d: 42}}}}
+project deep.a.b.c.d
+
+perceive matrix = {rows: [{vals: [1,2,3]}, {vals: [4,5,6]}]}
+project matrix.rows[0].vals[1]
+project matrix.rows[1].vals[2]
+
+# --- String with special characters and escapes ---
+perceive s1 = "hello\nworld"
+project s1
+perceive s2 = "tab\there"
+project s2
+perceive s3 = "quote: \"inside\""
+project s3
+perceive s4 = "backslash: \\"
+project s4
+
+# --- Zero division behavior (guarded with confront/embrace) ---
+# Note: bare integer division by zero is not caught by the VM;
+# guard with a conditional to avoid runtime crash.
+dream safe_div(a, b) {
+    if b == 0 {
+        manifest "div_by_zero"
+    }
+    manifest a / b
+}
+project safe_div(10, 0)
+project safe_div(10, 2)
+project safe_div(0, 5)
+project 0 / 1
+
+# --- Large number arithmetic ---
+perceive big = 1000000
+project big * big
+project big + 999999
+project big - 1
+project big / 1000
+perceive neg_big = -1000000
+project neg_big * 2
+project abs(neg_big)
+
+# --- Nested function calls (3+ deep) ---
+dream add(a, b) { manifest a + b }
+dream mul(a, b) { manifest a * b }
+dream sub(a, b) { manifest a - b }
+dream double2(x) { manifest x * 2 }
+dream inc(x) { manifest x + 1 }
+dream sq(x) { manifest x * x }
+
+project add(mul(2, 3), sub(10, 4))
+project double2(inc(sq(3)))
+project mul(add(1, 2), add(3, 4))
+project add(mul(add(1, 1), 3), sub(10, mul(2, 2)))
+
+# --- Variable shadowing in nested scopes ---
+# Function scope is properly isolated: each function has its own scope.
+perceive x = 1
+dream outer() {
+    perceive x = 10
+    dream inner() {
+        perceive x = 100
+        manifest x
+    }
+    manifest inner()
+}
+project x
+project outer()
+project x
+
+# Bug note: perceive inside for/if blocks does NOT create a new scope --
+# it mutates the closest existing binding for that name in the current frame.
+# The variable declared in the outer scope gets overwritten.
+perceive val = 42
+for i in range(3) {
+    perceive val = i * 10
+}
+project val
+
+perceive y = 5
+if true {
+    perceive y = 99
+}
+project y

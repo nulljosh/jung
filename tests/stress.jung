@@ -1,0 +1,86 @@
+# Stress tests: large arrays, deep recursion, nested loops,
+# complex interpolation, multiple archetype instances interacting
+
+# --- Large array (100 elements via range) ---
+perceive arr = range(100)
+project len(arr)
+project arr[0]
+project arr[99]
+project arr[50]
+
+perceive total = 0
+for i in range(10) {
+    total += i
+}
+project total
+
+# --- Deep recursion: fibonacci to depth 15 ---
+dream fib(n) {
+    if n <= 1 {
+        manifest n
+    }
+    manifest fib(n - 1) + fib(n - 2)
+}
+project fib(10)
+project fib(12)
+project fib(15)
+
+# --- Nested loops (3 deep) ---
+perceive count = 0
+for i in range(3) {
+    for j in range(3) {
+        for k in range(3) {
+            count += 1
+        }
+    }
+}
+project count
+
+for i in range(2) {
+    for j in range(2) {
+        for k in range(2) {
+            project str(i) + str(j) + str(k)
+        }
+    }
+}
+
+# --- Complex string interpolation chains ---
+perceive name = "Carl"
+perceive age = 26
+perceive city = "Zurich"
+project "Name: ${name}, Age: ${age}, City: ${city}"
+perceive score = 95
+project "Score: ${score}, Grade: ${score >= 90 ? "A" : "B"}"
+perceive sx = 10
+perceive sy = 20
+project "Sum: ${sx + sy}, Product: ${sx * sy}, Diff: ${sy - sx}"
+
+# --- Multiple archetype instances interacting ---
+archetype Vector {
+    fn init(x, y) {
+        Self.x = x
+        Self.y = y
+    }
+    fn add(other) {
+        manifest emerge Vector(Self.x + other.x, Self.y + other.y)
+    }
+    fn scale(factor) {
+        manifest emerge Vector(Self.x * factor, Self.y * factor)
+    }
+    fn magnitude() {
+        manifest sqrt(Self.x * Self.x + Self.y * Self.y)
+    }
+    fn describe() {
+        manifest "(" + str(Self.x) + ", " + str(Self.y) + ")"
+    }
+}
+
+perceive v1 = emerge Vector(3, 4)
+perceive v2 = emerge Vector(1, 2)
+perceive v3 = v1.add(v2)
+project v3.describe()
+project v1.magnitude()
+perceive v4 = v1.scale(2)
+project v4.describe()
+perceive v5 = v3.add(v4)
+project v5.describe()

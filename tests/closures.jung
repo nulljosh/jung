@@ -1,0 +1,110 @@
+# Closure and higher-order function tests.
+#
+# Bug note: jung does NOT support true lexical closures -- inner functions
+# cannot capture variables from the enclosing function's scope at the time
+# the inner function is defined. Attempting to reference such variables
+# results in: "undefined variable '<name>'"
+#
+# The tests below use patterns that ARE supported:
+#   - Functions as first-class values (pass/store/call)
+#   - Higher-order functions (apply, apply_twice)
+#   - Mutable state via archetype instances (counter pattern)
+#   - Map/filter/reduce patterns via explicit loops
+
+# --- Functions as first-class values: pass to HOF ---
+dream apply(f, val) {
+    manifest f(val)
+}
+
+dream double(x) { manifest x * 2 }
+dream square(x) { manifest x * x }
+dream negate(x) { manifest x * -1 }
+
+project apply(double, 7)
+project apply(square, 5)
+project apply(negate, 10)
+
+# --- apply_twice: compose f with itself ---
+dream apply_twice(f, x) {
+    manifest f(f(x))
+}
+project apply_twice(double, 3)
+project apply_twice(square, 2)
+
+# --- Counter pattern: mutable state per archetype instance ---
+# Simulates closure-with-mutable-state using Self fields.
+archetype Counter {
+    fn init(start) {
+        Self.count = start
+    }
+    fn increment() {
+        Self.count += 1
+        manifest Self.count
+    }
+    fn decrement() {
+        Self.count -= 1
+        manifest Self.count
+    }
+    fn get() {
+        manifest Self.count
+    }
+    fn reset() {
+        Self.count = 0
+    }
+    fn add(n) {
+        Self.count += n
+        manifest Self.count
+    }
+}
+
+perceive c = emerge Counter(0)
+project c.increment()
+project c.increment()
+project c.increment()
+project c.get()
+project c.decrement()
+project c.get()
+c.reset()
+project c.get()
+project c.add(5)
+
+# Two independent counters -- each instance has isolated state.
+perceive c1 = emerge Counter(0)
+perceive c2 = emerge Counter(100)
+project c1.increment()
+project c2.decrement()
+project c1.get()
+project c2.get()
+
+# --- Filter-like pattern: iterate and conditionally print ---
+dream print_evens(arr) {
+    for item in arr {
+        if item % 2 == 0 {
+            project item
+        }
+    }
+}
+
+print_evens([1, 2, 3, 4, 5, 6, 7, 8])
+
+# --- Reduce-like pattern: fold array into single value ---
+dream reduce_sum(arr) {
+    perceive acc = 0
+    for item in arr {
+        acc += item
+    }
+    manifest acc
+}
+
+project reduce_sum([1, 2, 3, 4, 5])
+project reduce_sum([10, 20, 30])
+
+# --- Map-like pattern: transform each element inline ---
+dream sum_doubled(arr) {
+    perceive acc = 0
+    for item in arr {
+        acc += item * 2
+    }
+    manifest acc
+}
+project sum_doubled([1, 2, 3, 4, 5])
