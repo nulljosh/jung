@@ -15,6 +15,7 @@ typedef enum {
     NODE_CLASS, NODE_NEW, NODE_THIS,
     NODE_ARRAY, NODE_ARRAY_INDEX,
     NODE_OBJECT, NODE_OBJ_ACCESS, NODE_OBJ_ASSIGN,
+    NODE_OBJ_COMPOUND_ASSIGN,
     NODE_TERNARY, NODE_STRING_INTERP,
     NODE_PROGRAM
 } NodeType;
@@ -173,6 +174,16 @@ struct ASTNode {
             ASTNode *value;
             int is_bracket;
         } obj_assign;
+
+        /* NODE_OBJ_COMPOUND_ASSIGN */
+        struct {
+            ASTNode *obj;
+            char *key;
+            ASTNode *key_expr;
+            ASTNode *value;
+            int is_bracket;
+            TokenType op;
+        } obj_comp_assign;
 
         /* NODE_TERNARY */
         struct {

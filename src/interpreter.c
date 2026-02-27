@@ -670,6 +670,83 @@ static void exec_stmt(Interpreter *it, ASTNode *node) {
         break;
     }
 
+    case NODE_OBJ_COMPOUND_ASSIGN: {
+        /* Read current value, apply compound op, write back */
+        Value obj = eval_node(it, node->as.obj_comp_assign.obj);
+        Value rhs = eval_node(it, node->as.obj_comp_assign.value);
+
+        /* Read current property value */
+        Value current = val_null();
+        if (obj.type == VAL_OBJECT) {
+            if (node->as.obj_comp_assign.key && !node->as.obj_comp_assign.is_bracket) {
+                Value v;
+                if (table_get(obj.as.object, node->as.obj_comp_assign.key, &v)) {
+                    current = val_copy(v);
+                }
+            } else if (node->as.obj_comp_assign.key_expr) {
+                Value key = eval_node(it, node->as.obj_comp_assign.key_expr);
+                if (key.type == VAL_STRING) {
+                    Value v;
+                    if (table_get(obj.as.object, key.as.string.str, &v)) {
+                        current = val_copy(v);
+                    }
+                }
+                val_free(&key);
+            }
+        }
+
+        /* Compute new value */
+        Value result = val_null();
+        if (current.type == VAL_NUMBER && rhs.type == VAL_NUMBER) {
+            double l = current.as.number, r = rhs.as.number;
+            switch (node->as.obj_comp_assign.op) {
+                case TOKEN_PLUS_ASSIGN:     result = val_number(l + r); break;
+                case TOKEN_MINUS_ASSIGN:    result = val_number(l - r); break;
+                case TOKEN_MULTIPLY_ASSIGN: result = val_number(l * r); break;
+                case TOKEN_DIVIDE_ASSIGN:
+                    if (r == 0) runtime_error(it, node->line, "division by zero");
+                    if (l == floor(l) && r == floor(r)) {
+                        result = val_number((double)((long)l / (long)r));
+                    } else {
+                        result = val_number(l / r);
+                    }
+                    break;
+                default: result = val_null(); break;
+            }
+        } else if (node->as.obj_comp_assign.op == TOKEN_PLUS_ASSIGN &&
+                   (current.type == VAL_STRING || rhs.type == VAL_STRING)) {
+            char *ls = val_to_string(current);
+            char *rs = val_to_string(rhs);
+            int llen = (int)strlen(ls);
+            int rlen = (int)strlen(rs);
+            char *out = malloc((size_t)(llen + rlen + 1));
+            memcpy(out, ls, (size_t)llen);
+            memcpy(out + llen, rs, (size_t)rlen);
+            out[llen + rlen] = '\0';
+            free(ls); free(rs);
+            result = val_string_take(out, llen + rlen);
+        } else {
+            runtime_error(it, node->line, "unsupported types for compound assignment");
+        }
+        val_free(&current);
+        val_free(&rhs);
+
+        /* Write back */
+        if (obj.type == VAL_OBJECT) {
+            if (node->as.obj_comp_assign.key && !node->as.obj_comp_assign.is_bracket) {
+                table_set(obj.as.object, node->as.obj_comp_assign.key, result);
+            } else if (node->as.obj_comp_assign.key_expr) {
+                Value key = eval_node(it, node->as.obj_comp_assign.key_expr);
+                if (key.type == VAL_STRING) {
+                    table_set(obj.as.object, key.as.string.str, result);
+                }
+                val_free(&key);
+            }
+        }
+        val_free(&obj);
+        break;
+    }
+
     case NODE_OBJ_ASSIGN: {
         Value obj = eval_node(it, node->as.obj_assign.obj);
         Value val = eval_node(it, node->as.obj_assign.value);
@@ -850,6 +927,11 @@ static void exec_stmt(Interpreter *it, ASTNode *node) {
             it->break_flag = 0;
             it->continue_flag = 0;
 
+            /* Decrement try_depth BEFORE executing the catch body so that
+             * any exception thrown from within the catch block propagates
+             * to the enclosing try, not back to this same try (infinite loop). */
+            it->try_depth--;
+
             push_scope(it);
             if (node->as.try_catch.catch_var && it->exception_msg) {
                 int elen = (int)strlen(it->exception_msg);
@@ -862,7 +944,7 @@ static void exec_stmt(Interpreter *it, ASTNode *node) {
             free(it->exception_msg);
             it->exception_msg = NULL;
         }
-        it->try_depth--;
+        if (!caught) it->try_depth--;
         (void)caught;
         break;
     }

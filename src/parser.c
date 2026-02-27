@@ -773,55 +773,28 @@ static ASTNode *parse_statement(Parser *p) {
             return n;
         }
 
-        /* compound assignment on obj.prop or arr[idx]: desugar X op= Y into X = X op Y */
+        /* compound assignment on obj.prop or arr[idx]: obj.prop += val */
         if (match(p, TOKEN_PLUS_ASSIGN) || match(p, TOKEN_MINUS_ASSIGN) ||
             match(p, TOKEN_MULTIPLY_ASSIGN) || match(p, TOKEN_DIVIDE_ASSIGN)) {
             Token *op_tok = advance_tok(p);
-            TokenType bin_op;
-            switch (op_tok->type) {
-                case TOKEN_PLUS_ASSIGN:     bin_op = TOKEN_PLUS; break;
-                case TOKEN_MINUS_ASSIGN:    bin_op = TOKEN_MINUS; break;
-                case TOKEN_MULTIPLY_ASSIGN: bin_op = TOKEN_MULTIPLY; break;
-                case TOKEN_DIVIDE_ASSIGN:   bin_op = TOKEN_DIVIDE; break;
-                default:                    bin_op = TOKEN_PLUS; break;
-            }
             ASTNode *rhs = parse_expression(p);
             optional_semicolon(p);
 
             if (expr->type == NODE_OBJ_ACCESS || expr->type == NODE_ARRAY_INDEX) {
-                /* Build a read-copy of the access expression for the binary LHS */
-                ASTNode *read_expr;
+                ASTNode *n = alloc_node(NODE_OBJ_COMPOUND_ASSIGN, line, col);
                 if (expr->type == NODE_OBJ_ACCESS) {
-                    read_expr = alloc_node(NODE_OBJ_ACCESS, line, col);
-                    /* Deep-copy the obj subtree so both sides own their own trees */
-                    read_expr->as.obj_access.obj = expr->as.obj_access.obj;
-                    read_expr->as.obj_access.key = expr->as.obj_access.key ? strdup(expr->as.obj_access.key) : NULL;
-                    read_expr->as.obj_access.key_expr = expr->as.obj_access.key_expr;
-                    read_expr->as.obj_access.is_bracket = expr->as.obj_access.is_bracket;
+                    n->as.obj_comp_assign.obj = expr->as.obj_access.obj;
+                    n->as.obj_comp_assign.key = expr->as.obj_access.key;
+                    n->as.obj_comp_assign.key_expr = expr->as.obj_access.key_expr;
+                    n->as.obj_comp_assign.is_bracket = expr->as.obj_access.is_bracket;
                 } else {
-                    read_expr = alloc_node(NODE_ARRAY_INDEX, line, col);
-                    read_expr->as.array_index.array_expr = expr->as.array_index.array_expr;
-                    read_expr->as.array_index.index = expr->as.array_index.index;
+                    n->as.obj_comp_assign.obj = expr->as.array_index.array_expr;
+                    n->as.obj_comp_assign.key = NULL;
+                    n->as.obj_comp_assign.key_expr = expr->as.array_index.index;
+                    n->as.obj_comp_assign.is_bracket = 1;
                 }
-
-                ASTNode *bin = alloc_node(NODE_BINARY, line, col);
-                bin->as.binary.left = read_expr;
-                bin->as.binary.right = rhs;
-                bin->as.binary.op = bin_op;
-
-                ASTNode *n = alloc_node(NODE_OBJ_ASSIGN, line, col);
-                if (expr->type == NODE_OBJ_ACCESS) {
-                    n->as.obj_assign.obj = expr->as.obj_access.obj;
-                    n->as.obj_assign.key = expr->as.obj_access.key;
-                    n->as.obj_assign.key_expr = expr->as.obj_access.key_expr;
-                    n->as.obj_assign.is_bracket = expr->as.obj_access.is_bracket;
-                } else {
-                    n->as.obj_assign.obj = expr->as.array_index.array_expr;
-                    n->as.obj_assign.key = NULL;
-                    n->as.obj_assign.key_expr = expr->as.array_index.index;
-                    n->as.obj_assign.is_bracket = 1;
-                }
-                n->as.obj_assign.value = bin;
+                n->as.obj_comp_assign.value = rhs;
+                n->as.obj_comp_assign.op = op_tok->type;
                 free(expr);
                 return n;
             } else {
@@ -1021,6 +994,13 @@ void ast_free(ASTNode *node) {
             free(node->as.obj_assign.key);
             ast_free(node->as.obj_assign.key_expr);
             ast_free(node->as.obj_assign.value);
+            break;
+
+        case NODE_OBJ_COMPOUND_ASSIGN:
+            ast_free(node->as.obj_comp_assign.obj);
+            free(node->as.obj_comp_assign.key);
+            ast_free(node->as.obj_comp_assign.key_expr);
+            ast_free(node->as.obj_comp_assign.value);
             break;
 
         case NODE_TERNARY:
