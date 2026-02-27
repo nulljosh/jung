@@ -1,0 +1,66 @@
+# If/else, while, for-in, break/continue
+
+# if/else
+perceive val = 10
+if val > 5 {
+    project "greater"
+}
+
+if val < 5 {
+    project "less"
+} else {
+    project "not less"
+}
+
+# else if chain
+perceive grade = 85
+if grade >= 90 {
+    project "A"
+} else if grade >= 80 {
+    project "B"
+} else if grade >= 70 {
+    project "C"
+} else {
+    project "F"
+}
+
+# while loop
+perceive count = 0
+while count < 5 {
+    project count
+    count += 1
+}
+
+# for-in over array
+perceive fruits = ["apple", "banana", "cherry"]
+for fruit in fruits {
+    project fruit
+}
+
+# for-in over range
+for i in range(3) {
+    project "i=" + str(i)
+}
+
+# range with start/end
+for i in range(5, 8) {
+    project i
+}
+
+# break
+perceive n = 0
+while true {
+    if n >= 3 {
+        break
+    }
+    project "n=" + str(n)
+    n += 1
+}
+
+# continue
+for i in range(6) {
+    if i % 2 == 0 {
+        continue
+    }
+    project "odd: " + str(i)
+}

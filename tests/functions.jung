@@ -1,0 +1,57 @@
+# Functions: dream/fn, manifest/return, recursion, defaults
+
+# basic function
+dream greet(name) {
+    project "hello " + name
+}
+greet("world")
+
+# return value
+dream add(a, b) {
+    manifest a + b
+}
+project add(3, 4)
+
+# default parameters
+dream say(msg, times = 2) {
+    perceive i = 0
+    while i < times {
+        project msg
+        i += 1
+    }
+}
+say("hi")
+say("yo", 1)
+
+# recursion (fibonacci)
+dream fib(n) {
+    if n <= 1 {
+        manifest n
+    }
+    manifest fib(n - 1) + fib(n - 2)
+}
+project fib(0)
+project fib(1)
+project fib(5)
+project fib(10)
+
+# fn keyword works too
+fn double(x) {
+    manifest x * 2
+}
+project double(7)
+
+# individuation keyword also maps to fn
+individuation triple(x) {
+    manifest x * 3
+}
+project triple(5)
+
+# functions as values
+dream apply(f, val) {
+    manifest f(val)
+}
+project apply(double, 10)
+
+# nested function calls
+project add(double(3), fib(4))

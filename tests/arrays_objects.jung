@@ -1,0 +1,59 @@
+# Data structures: arrays, objects, methods
+
+# array literals and indexing
+perceive nums = [10, 20, 30]
+project nums[0]
+project nums[1]
+project nums[2]
+
+# push and pop (method syntax)
+nums.push(40)
+project nums
+project nums.length()
+
+# object literals
+perceive person = {name: "Carl", role: "psychologist"}
+project person.name
+project person.role
+
+# bracket access
+project person["name"]
+
+# property assignment
+person.age = 65
+project person.age
+
+# nested structures
+perceive data = {
+    items: [1, 2, 3],
+    meta: {count: 3}
+}
+project data.items
+project data.meta.count
+
+# iteration over array
+for item in [100, 200, 300] {
+    project item
+}
+
+# string methods
+project "hello".upper()
+project "WORLD".lower()
+project "  trimmed  ".trim()
+project "hello world".contains("world")
+project "hello world".contains("xyz")
+project "hello world".replace("world", "jung")
+project "hello world".indexOf("world")
+
+# array methods
+perceive list = [1, 2, 3, 4, 5]
+project list.includes(3)
+project list.includes(9)
+project [1, 2].concat([3, 4])
+project [[1, 2], [3, 4]].flat()
+project [1, 2, 3].indexOf(2)
+
+# object methods
+perceive config = {a: 1, b: 2}
+project config.has("a")
+project config.has("z")

@@ -1,0 +1,8 @@
+before throw
+caught: something went wrong
+5
+error: [line 14] division by zero
+after catch
+std caught: standard throw
+inner caught: inner
+outer caught: rethrown

@@ -1,0 +1,66 @@
+# All Jungian keyword aliases work identically to standard keywords
+
+# perceive = let
+perceive x = 42
+project x
+
+# dream = fn
+dream square(n) {
+    manifest n * n
+}
+project square(6)
+
+# individuation = fn
+individuation cube(n) {
+    manifest n * n * n
+}
+project cube(3)
+
+# archetype = class
+archetype Hero {
+    fn init(name) {
+        Self.name = name
+    }
+    fn quest() {
+        manifest Self.name + " embarks"
+    }
+}
+perceive h = emerge Hero("Jung")
+project h.quest()
+
+# unconscious = null
+perceive void = unconscious
+project void
+
+# confront/embrace/reject = try/catch/throw
+confront {
+    reject "shadow appears"
+} embrace (e) {
+    project e
+}
+
+# project = print (already used throughout)
+project "all aliases verified"
+
+# mixing standard and jungian keywords
+let y = 99
+fn inc(n) {
+    return n + 1
+}
+project inc(y)
+
+class Point {
+    fn init(x, y) {
+        this.x = x
+        this.y = y
+    }
+}
+perceive p = new Point(3, 4)
+project p.x
+project p.y
+
+try {
+    throw "standard error"
+} catch (e) {
+    project "caught: " + e
+}

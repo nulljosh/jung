@@ -1,0 +1,47 @@
+# Classes: archetype/class, emerge/new, Self/this
+
+archetype Animal {
+    fn init(name, sound) {
+        Self.name = name
+        Self.sound = sound
+    }
+
+    fn speak() {
+        project Self.name + " says " + Self.sound
+    }
+}
+
+perceive dog = emerge Animal("Rex", "woof")
+perceive cat = emerge Animal("Whiskers", "meow")
+dog.speak()
+cat.speak()
+
+# property access
+project dog.name
+project cat.sound
+
+# class keyword works too
+class Counter {
+    fn init(start) {
+        Self.value = start
+    }
+
+    fn increment() {
+        Self.value += 1
+    }
+
+    fn get() {
+        manifest Self.value
+    }
+}
+
+perceive c = emerge Counter(0)
+c.increment()
+c.increment()
+c.increment()
+project c.get()
+project c.value
+
+# property assignment
+c.value = 100
+project c.get()

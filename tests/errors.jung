@@ -1,0 +1,47 @@
+# Error handling: confront/embrace/reject (try/catch/throw)
+
+# basic try/catch
+confront {
+    project "before throw"
+    reject "something went wrong"
+    project "after throw"
+} embrace (e) {
+    project "caught: " + e
+}
+
+# try/catch with function
+dream safe_divide(a, b) {
+    if b == 0 {
+        reject "division by zero"
+    }
+    manifest a / b
+}
+
+confront {
+    project safe_divide(10, 2)
+    project safe_divide(10, 0)
+} embrace (e) {
+    project "error: " + e
+}
+
+# control flow after catch
+project "after catch"
+
+# standard keywords work too
+try {
+    throw "standard throw"
+} catch (err) {
+    project "std caught: " + err
+}
+
+# nested try/catch
+confront {
+    confront {
+        reject "inner"
+    } embrace (e) {
+        project "inner caught: " + e
+        reject "rethrown"
+    }
+} embrace (e) {
+    project "outer caught: " + e
+}

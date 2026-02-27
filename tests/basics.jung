@@ -1,0 +1,64 @@
+# Variables, arithmetic, strings, booleans, null
+
+# perceive (let)
+perceive x = 10
+perceive y = 3
+project x
+project y
+
+# arithmetic
+project x + y
+project x - y
+project x * y
+project x / y
+project x % y
+
+# compound assignment
+x += 5
+project x
+x -= 2
+project x
+x *= 3
+project x
+x /= 9
+project x
+
+# strings
+perceive name = "Jung"
+project name
+project "Hello, " + name
+
+# string interpolation
+perceive age = 26
+project "Name: ${name}, Age: ${age}"
+
+# booleans
+project true
+project false
+project true and true
+project true and false
+project false or true
+project not false
+
+# null / unconscious
+project unconscious
+perceive nothing = null
+project nothing
+
+# ternary
+project true ? "yes" : "no"
+project false ? "yes" : "no"
+project 1 > 0 ? "greater" : "less"
+
+# comparisons
+project 5 == 5
+project 5 != 3
+project 5 > 3
+project 5 < 3
+project 5 >= 5
+project 3 <= 5
+
+# negative numbers
+project -42
+perceive neg = -7
+project neg
