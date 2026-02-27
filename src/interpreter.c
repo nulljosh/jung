@@ -234,6 +234,10 @@ static Value eval_node(Interpreter *it, ASTNode *node) {
                 case TOKEN_MULTIPLY: return val_number(l * r);
                 case TOKEN_DIVIDE:
                     if (r == 0) runtime_error(it, node->line, "division by zero");
+                    /* Integer division when both operands are integers */
+                    if (l == floor(l) && r == floor(r)) {
+                        return val_number((double)((long)l / (long)r));
+                    }
                     return val_number(l / r);
                 case TOKEN_MODULO:
                     if (r == 0) runtime_error(it, node->line, "modulo by zero");
@@ -634,7 +638,12 @@ static void exec_stmt(Interpreter *it, ASTNode *node) {
                 case TOKEN_MULTIPLY_ASSIGN: result = val_number(current.as.number * rhs.as.number); break;
                 case TOKEN_DIVIDE_ASSIGN:
                     if (rhs.as.number == 0) runtime_error(it, node->line, "division by zero");
-                    result = val_number(current.as.number / rhs.as.number);
+                    if (current.as.number == floor(current.as.number) &&
+                        rhs.as.number == floor(rhs.as.number)) {
+                        result = val_number((double)((long)current.as.number / (long)rhs.as.number));
+                    } else {
+                        result = val_number(current.as.number / rhs.as.number);
+                    }
                     break;
                 default:
                     result = val_null();

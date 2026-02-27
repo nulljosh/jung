@@ -773,6 +773,62 @@ static ASTNode *parse_statement(Parser *p) {
             return n;
         }
 
+        /* compound assignment on obj.prop or arr[idx]: desugar X op= Y into X = X op Y */
+        if (match(p, TOKEN_PLUS_ASSIGN) || match(p, TOKEN_MINUS_ASSIGN) ||
+            match(p, TOKEN_MULTIPLY_ASSIGN) || match(p, TOKEN_DIVIDE_ASSIGN)) {
+            Token *op_tok = advance_tok(p);
+            TokenType bin_op;
+            switch (op_tok->type) {
+                case TOKEN_PLUS_ASSIGN:     bin_op = TOKEN_PLUS; break;
+                case TOKEN_MINUS_ASSIGN:    bin_op = TOKEN_MINUS; break;
+                case TOKEN_MULTIPLY_ASSIGN: bin_op = TOKEN_MULTIPLY; break;
+                case TOKEN_DIVIDE_ASSIGN:   bin_op = TOKEN_DIVIDE; break;
+                default:                    bin_op = TOKEN_PLUS; break;
+            }
+            ASTNode *rhs = parse_expression(p);
+            optional_semicolon(p);
+
+            if (expr->type == NODE_OBJ_ACCESS || expr->type == NODE_ARRAY_INDEX) {
+                /* Build a read-copy of the access expression for the binary LHS */
+                ASTNode *read_expr;
+                if (expr->type == NODE_OBJ_ACCESS) {
+                    read_expr = alloc_node(NODE_OBJ_ACCESS, line, col);
+                    /* Deep-copy the obj subtree so both sides own their own trees */
+                    read_expr->as.obj_access.obj = expr->as.obj_access.obj;
+                    read_expr->as.obj_access.key = expr->as.obj_access.key ? strdup(expr->as.obj_access.key) : NULL;
+                    read_expr->as.obj_access.key_expr = expr->as.obj_access.key_expr;
+                    read_expr->as.obj_access.is_bracket = expr->as.obj_access.is_bracket;
+                } else {
+                    read_expr = alloc_node(NODE_ARRAY_INDEX, line, col);
+                    read_expr->as.array_index.array_expr = expr->as.array_index.array_expr;
+                    read_expr->as.array_index.index = expr->as.array_index.index;
+                }
+
+                ASTNode *bin = alloc_node(NODE_BINARY, line, col);
+                bin->as.binary.left = read_expr;
+                bin->as.binary.right = rhs;
+                bin->as.binary.op = bin_op;
+
+                ASTNode *n = alloc_node(NODE_OBJ_ASSIGN, line, col);
+                if (expr->type == NODE_OBJ_ACCESS) {
+                    n->as.obj_assign.obj = expr->as.obj_access.obj;
+                    n->as.obj_assign.key = expr->as.obj_access.key;
+                    n->as.obj_assign.key_expr = expr->as.obj_access.key_expr;
+                    n->as.obj_assign.is_bracket = expr->as.obj_access.is_bracket;
+                } else {
+                    n->as.obj_assign.obj = expr->as.array_index.array_expr;
+                    n->as.obj_assign.key = NULL;
+                    n->as.obj_assign.key_expr = expr->as.array_index.index;
+                    n->as.obj_assign.is_bracket = 1;
+                }
+                n->as.obj_assign.value = bin;
+                free(expr);
+                return n;
+            } else {
+                parser_error(p, "Invalid compound assignment target");
+            }
+        }
+
         optional_semicolon(p);
         return expr;
     }
