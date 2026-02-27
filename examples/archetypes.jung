@@ -1,0 +1,43 @@
+# Archetypes -- classes in the collective unconscious
+
+archetype Shadow {
+    fn init(name) {
+        Self.name = name
+        Self.repressed = []
+    }
+
+    fn repress(memory) {
+        Self.repressed.push(memory)
+        project Self.name + " represses: " + memory
+    }
+
+    fn face() {
+        project Self.name + " confronts " + str(len(Self.repressed)) + " repressed memories"
+        for memory in Self.repressed {
+            project "  - " + memory
+        }
+    }
+}
+
+archetype Persona {
+    fn init(name, role) {
+        Self.name = name
+        Self.role = role
+    }
+
+    fn present() {
+        project Self.name + " presents as: " + Self.role
+    }
+}
+
+# The psyche at work
+perceive shadow = emerge Shadow("The Unconscious")
+shadow.repress("childhood fear")
+shadow.repress("unspoken anger")
+shadow.repress("hidden desire")
+shadow.face()
+
+print ""
+
+perceive mask = emerge Persona("Joshua", "Software Engineer")
+mask.present()

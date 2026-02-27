@@ -1,0 +1,42 @@
+# Dreams -- functions as messages from the unconscious
+
+dream interpret(symbols) {
+    perceive meanings = {
+        water: "emotions, the unconscious",
+        fire: "transformation, passion",
+        snake: "healing, rebirth",
+        tree: "growth, the Self",
+        mirror: "self-reflection, shadow",
+        door: "opportunity, transition"
+    }
+
+    project "Dream Analysis:"
+    for symbol in symbols {
+        if meanings.has(symbol) {
+            project "  " + symbol + " -> " + meanings[symbol]
+        } else {
+            project "  " + symbol + " -> meaning unknown (deeper work needed)"
+        }
+    }
+}
+
+dream analyze_psyche(traits) {
+    perceive conscious = []
+    perceive hidden = []
+
+    for i in range(len(traits)) {
+        if i % 2 == 0 {
+            conscious.push(traits[i])
+        } else {
+            hidden.push(traits[i])
+        }
+    }
+
+    project "Conscious traits: " + str(conscious)
+    project "Shadow traits:    " + str(hidden)
+    project "Integration needed: " + str(len(hidden)) + " shadow elements"
+}
+
+interpret(["water", "snake", "door", "mirror", "void"])
+project ""
+analyze_psyche(["creativity", "anger", "empathy", "jealousy", "courage", "fear"])

@@ -1,0 +1,19 @@
+# Confronting the Shadow -- error handling in Jung
+
+dream divide(a, b) {
+    if b == 0 {
+        reject "Cannot divide by the void"
+    }
+    manifest a / b
+}
+
+# Confront and embrace -- try/catch
+confront {
+    project divide(10, 2)
+    project divide(10, 0)
+} embrace (e) {
+    project "Shadow encountered: " + e
+}
+
+project ""
+project "The journey continues after confrontation."

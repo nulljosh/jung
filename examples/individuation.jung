@@ -1,0 +1,33 @@
+# The Individuation Process
+# A journey from fragmentation to wholeness
+
+dream fibonacci(n) {
+    if n <= 1 {
+        manifest n
+    }
+    manifest fibonacci(n - 1) + fibonacci(n - 2)
+}
+
+dream fizzbuzz(n) {
+    for i in range(1, n + 1) {
+        if i % 15 == 0 {
+            project "Individuation"
+        } else if i % 3 == 0 {
+            project "Shadow"
+        } else if i % 5 == 0 {
+            project "Persona"
+        } else {
+            project i
+        }
+    }
+}
+
+# Fibonacci: each number contains the wisdom of its ancestors
+project "The Golden Spiral of the Psyche:"
+for i in range(10) {
+    project "  fib(" + str(i) + ") = " + str(fibonacci(i))
+}
+
+project ""
+project "The Archetypal FizzBuzz:"
+fizzbuzz(20)

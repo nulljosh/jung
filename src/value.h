@@ -1,83 +1,85 @@
 #ifndef JUNG_VALUE_H
 #define JUNG_VALUE_H
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
+#include <stddef.h>
 
 typedef enum {
+    VAL_NULL,
+    VAL_BOOL,
     VAL_NUMBER,
     VAL_STRING,
-    VAL_BOOL,
-    VAL_NULL,
     VAL_ARRAY,
     VAL_OBJECT,
-    VAL_FUNCTION
+    VAL_FUNCTION,
+    VAL_BUILTIN
 } ValueType;
 
-/* Forward declare ASTNode */
-struct ASTNode;
+typedef struct Value Value;
+typedef struct Table Table;
+typedef struct ASTNode ASTNode;
 
-typedef struct Value {
+/* Function parameter: name + optional default expression */
+typedef struct {
+    char *name;
+    ASTNode *default_val; /* NULL if no default */
+} Param;
+
+typedef struct {
+    char *name;
+    Param *params;
+    int param_count;
+    ASTNode **body;
+    int body_count;
+} FuncDef;
+
+/* Builtin function pointer: receives array of Value, count, returns Value */
+typedef Value (*BuiltinFn)(Value *args, int argc);
+
+struct Value {
     ValueType type;
     int refcount;
     union {
-        double number;
-        char *string;
         int boolean;
-        struct {
-            struct Value **items;
-            int length;
-            int capacity;
-        } array;
-        struct {
-            char **keys;
-            struct Value **values;
-            int length;
-            int capacity;
-        } object;
-        struct {
-            char *name;
-            char **params;
-            int param_count;
-            struct ASTNode *body;     /* NODE_PROGRAM or block body */
-            int body_count;           /* number of statements in body */
-            struct ASTNode **body_stmts; /* array of statement pointers */
-        } function;
+        double number;
+        struct { char *str; int len; } string;
+        struct { Value *items; int count; int cap; } array;
+        Table *object;
+        FuncDef *func;
+        BuiltinFn builtin;
     } as;
-} Value;
+};
 
-Value *value_new_number(double n);
-Value *value_new_string(const char *s);
-Value *value_new_string_owned(char *s);  /* takes ownership, no copy */
-Value *value_new_bool(int b);
-Value *value_new_null(void);
-Value *value_new_array(void);
-Value *value_new_object(void);
-Value *value_new_function(const char *name, char **params, int param_count,
-                          struct ASTNode **body_stmts, int body_count);
+/* Constructors -- all return stack values. Strings/arrays/objects are heap-backed. */
+Value val_null(void);
+Value val_bool(int b);
+Value val_number(double n);
+Value val_string(const char *s, int len);
+Value val_string_take(char *s, int len);
+Value val_array(int initial_cap);
+Value val_object(void);
+Value val_func(FuncDef *f);
+Value val_builtin(BuiltinFn fn);
 
-void value_retain(Value *v);
-void value_release(Value *v);
+/* Reference counting */
+Value val_copy(Value v);
+void  val_free(Value *v);
 
-char *value_to_string(Value *v);
-int value_is_truthy(Value *v);
-int value_equals(Value *a, Value *b);
+/* Array helpers */
+void  val_array_push(Value *arr, Value item);
+Value val_array_pop(Value *arr);
+Value val_array_get(Value *arr, int idx);
+void  val_array_set(Value *arr, int idx, Value item);
 
-/* Array operations */
-void value_array_push(Value *arr, Value *item);
-Value *value_array_pop(Value *arr);
-Value *value_array_get(Value *arr, int index);
-void value_array_set(Value *arr, int index, Value *item);
+/* Truthiness */
+int   val_is_truthy(Value v);
 
-/* Object operations */
-void value_object_set(Value *obj, const char *key, Value *val);
-Value *value_object_get(Value *obj, const char *key);
-int value_object_has(Value *obj, const char *key);
+/* Equality */
+int   val_equal(Value a, Value b);
 
-/* JSON */
-char *value_to_json(Value *v);
-Value *value_from_json(const char *json, int *pos);
+/* Format to string for printing */
+char *val_to_string(Value v);
+
+/* Type name */
+const char *val_type_name(Value v);
 
 #endif

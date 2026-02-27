@@ -1,86 +1,142 @@
 #include "table.h"
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
-Table *table_new(void) {
-    Table *t = calloc(1, sizeof(Table));
-    t->capacity = 16;
-    t->length = 0;
-    t->keys = calloc(16, sizeof(char *));
-    t->values = calloc(16, sizeof(Value *));
-    return t;
+#define INITIAL_CAP 16
+
+static unsigned int hash_string(const char *s) {
+    unsigned int h = 2166136261u;
+    for (; *s; s++) {
+        h ^= (unsigned char)*s;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+void table_init(Table *t) {
+    t->cap = INITIAL_CAP;
+    t->count = 0;
+    t->refcount = 1;
+    t->entries = calloc((size_t)t->cap, sizeof(TableEntry *));
 }
 
 void table_free(Table *t) {
-    if (!t) return;
-    for (int i = 0; i < t->length; i++) {
-        free(t->keys[i]);
-        value_release(t->values[i]);
-    }
-    free(t->keys);
-    free(t->values);
-    free(t);
-}
-
-Value *table_get(Table *t, const char *key) {
-    for (int i = 0; i < t->length; i++) {
-        if (strcmp(t->keys[i], key) == 0) {
-            return t->values[i];
+    for (int i = 0; i < t->cap; i++) {
+        TableEntry *e = t->entries[i];
+        while (e) {
+            TableEntry *next = e->next;
+            free(e->key);
+            val_free(&e->value);
+            free(e);
+            e = next;
         }
     }
-    return NULL;
+    free(t->entries);
+    t->entries = NULL;
+    t->count = 0;
 }
 
-void table_set(Table *t, const char *key, Value *val) {
-    /* Update existing */
-    for (int i = 0; i < t->length; i++) {
-        if (strcmp(t->keys[i], key) == 0) {
-            value_retain(val);
-            value_release(t->values[i]);
-            t->values[i] = val;
+static void table_resize(Table *t) {
+    int new_cap = t->cap * 2;
+    TableEntry **new_entries = calloc((size_t)new_cap, sizeof(TableEntry *));
+
+    for (int i = 0; i < t->cap; i++) {
+        TableEntry *e = t->entries[i];
+        while (e) {
+            TableEntry *next = e->next;
+            unsigned int idx = hash_string(e->key) % (unsigned int)new_cap;
+            e->next = new_entries[idx];
+            new_entries[idx] = e;
+            e = next;
+        }
+    }
+    free(t->entries);
+    t->entries = new_entries;
+    t->cap = new_cap;
+}
+
+void table_set(Table *t, const char *key, Value val) {
+    if (t->count >= t->cap * 3 / 4) table_resize(t);
+
+    unsigned int idx = hash_string(key) % (unsigned int)t->cap;
+    TableEntry *e = t->entries[idx];
+    while (e) {
+        if (strcmp(e->key, key) == 0) {
+            val_free(&e->value);
+            e->value = val;
             return;
         }
+        e = e->next;
     }
 
-    /* New entry */
-    if (t->length >= t->capacity) {
-        t->capacity *= 2;
-        t->keys = realloc(t->keys, t->capacity * sizeof(char *));
-        t->values = realloc(t->values, t->capacity * sizeof(Value *));
+    TableEntry *ne = malloc(sizeof(TableEntry));
+    ne->key = strdup(key);
+    ne->value = val;
+    ne->next = t->entries[idx];
+    t->entries[idx] = ne;
+    t->count++;
+}
+
+int table_get(Table *t, const char *key, Value *out) {
+    unsigned int idx = hash_string(key) % (unsigned int)t->cap;
+    TableEntry *e = t->entries[idx];
+    while (e) {
+        if (strcmp(e->key, key) == 0) {
+            *out = e->value;
+            return 1;
+        }
+        e = e->next;
     }
-    t->keys[t->length] = strdup(key);
-    value_retain(val);
-    t->values[t->length] = val;
-    t->length++;
+    return 0;
 }
 
 int table_has(Table *t, const char *key) {
-    for (int i = 0; i < t->length; i++) {
-        if (strcmp(t->keys[i], key) == 0) return 1;
+    unsigned int idx = hash_string(key) % (unsigned int)t->cap;
+    TableEntry *e = t->entries[idx];
+    while (e) {
+        if (strcmp(e->key, key) == 0) return 1;
+        e = e->next;
     }
     return 0;
 }
 
 void table_delete(Table *t, const char *key) {
-    for (int i = 0; i < t->length; i++) {
-        if (strcmp(t->keys[i], key) == 0) {
-            free(t->keys[i]);
-            value_release(t->values[i]);
-            /* Shift remaining */
-            for (int j = i; j < t->length - 1; j++) {
-                t->keys[j] = t->keys[j + 1];
-                t->values[j] = t->values[j + 1];
-            }
-            t->length--;
+    unsigned int idx = hash_string(key) % (unsigned int)t->cap;
+    TableEntry **pp = &t->entries[idx];
+    while (*pp) {
+        if (strcmp((*pp)->key, key) == 0) {
+            TableEntry *del = *pp;
+            *pp = del->next;
+            free(del->key);
+            val_free(&del->value);
+            free(del);
+            t->count--;
             return;
         }
+        pp = &(*pp)->next;
     }
 }
 
-Table *table_copy(Table *t) {
-    Table *copy = table_new();
-    for (int i = 0; i < t->length; i++) {
-        table_set(copy, t->keys[i], t->values[i]);
+Value table_keys(Table *t) {
+    Value arr = val_array(t->count > 0 ? t->count : 8);
+    for (int i = 0; i < t->cap; i++) {
+        TableEntry *e = t->entries[i];
+        while (e) {
+            val_array_push(&arr, val_string(e->key, (int)strlen(e->key)));
+            e = e->next;
+        }
     }
-    return copy;
+    return arr;
+}
+
+Value table_values(Table *t) {
+    Value arr = val_array(t->count > 0 ? t->count : 8);
+    for (int i = 0; i < t->cap; i++) {
+        TableEntry *e = t->entries[i];
+        while (e) {
+            val_array_push(&arr, val_copy(e->value));
+            e = e->next;
+        }
+    }
+    return arr;
 }

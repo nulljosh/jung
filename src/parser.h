@@ -2,52 +2,34 @@
 #define JUNG_PARSER_H
 
 #include "lexer.h"
+#include "value.h"
 
 typedef enum {
-    NODE_NUMBER,
-    NODE_STRING,
-    NODE_BOOL,
-    NODE_NULL,
-    NODE_ARRAY,
-    NODE_OBJECT,
-    NODE_VARIABLE,
-    NODE_BINARY_OP,
-    NODE_UNARY_OP,
-    NODE_ASSIGNMENT,
-    NODE_COMPOUND_ASSIGN,
-    NODE_TERNARY,
-    NODE_STRING_INTERP,
-    NODE_INDEX,
-    NODE_DOT_ACCESS,
-    NODE_DOT_ASSIGN,
-    NODE_METHOD_CALL,
-    NODE_IF,
-    NODE_WHILE,
-    NODE_FOR,
-    NODE_BREAK,
-    NODE_CONTINUE,
-    NODE_FUNCTION_DEF,
-    NODE_FUNCTION_CALL,
-    NODE_RETURN,
-    NODE_CLASS_DEF,
-    NODE_NEW_INSTANCE,
-    NODE_THIS,
-    NODE_TRY_CATCH,
-    NODE_THROW,
-    NODE_PRINT,
-    NODE_IMPORT,
+    NODE_NUMBER, NODE_STRING, NODE_BOOL, NODE_NULL,
+    NODE_VARIABLE, NODE_BINARY, NODE_UNARY,
+    NODE_ASSIGN, NODE_COMPOUND_ASSIGN,
+    NODE_PRINT, NODE_IF, NODE_WHILE, NODE_FOR,
+    NODE_FUNC_DEF, NODE_FUNC_CALL, NODE_RETURN,
+    NODE_BREAK, NODE_CONTINUE,
+    NODE_IMPORT, NODE_TRY_CATCH, NODE_THROW,
+    NODE_CLASS, NODE_NEW, NODE_THIS,
+    NODE_ARRAY, NODE_ARRAY_INDEX,
+    NODE_OBJECT, NODE_OBJ_ACCESS, NODE_OBJ_ASSIGN,
+    NODE_TERNARY, NODE_STRING_INTERP,
     NODE_PROGRAM
 } NodeType;
 
-typedef struct ASTNode {
+struct ASTNode {
     NodeType type;
     int line;
+    int col;
+
     union {
         /* NODE_NUMBER */
         double number;
 
         /* NODE_STRING */
-        char *string;
+        struct { char *str; int len; } string;
 
         /* NODE_BOOL */
         int boolean;
@@ -55,96 +37,173 @@ typedef struct ASTNode {
         /* NODE_VARIABLE */
         char *var_name;
 
-        /* NODE_ARRAY */
-        struct { struct ASTNode **elements; int count; } array;
+        /* NODE_BINARY */
+        struct {
+            ASTNode *left;
+            ASTNode *right;
+            TokenType op;
+        } binary;
 
-        /* NODE_OBJECT */
-        struct { char **keys; struct ASTNode **values; int count; } object;
+        /* NODE_UNARY */
+        struct {
+            ASTNode *operand;
+            TokenType op;
+        } unary;
 
-        /* NODE_BINARY_OP */
-        struct { struct ASTNode *left; struct ASTNode *right; TokenType op; } binary;
-
-        /* NODE_UNARY_OP */
-        struct { struct ASTNode *operand; TokenType op; } unary;
-
-        /* NODE_ASSIGNMENT */
-        struct { char *name; struct ASTNode *value; } assign;
+        /* NODE_ASSIGN */
+        struct {
+            char *name;
+            ASTNode *value;
+        } assign;
 
         /* NODE_COMPOUND_ASSIGN */
-        struct { char *name; TokenType op; struct ASTNode *value; } compound;
-
-        /* NODE_TERNARY */
-        struct { struct ASTNode *cond; struct ASTNode *then_expr; struct ASTNode *else_expr; } ternary;
-
-        /* NODE_STRING_INTERP */
-        struct { struct ASTNode **parts; int count; } interp;
-
-        /* NODE_INDEX */
-        struct { struct ASTNode *object; struct ASTNode *index; } index;
-
-        /* NODE_DOT_ACCESS */
-        struct { struct ASTNode *object; char *field; } dot;
-
-        /* NODE_DOT_ASSIGN */
-        struct { struct ASTNode *object; char *field; struct ASTNode *value; int is_bracket; } dot_assign;
-
-        /* NODE_METHOD_CALL */
-        struct { struct ASTNode *object; char *method; struct ASTNode **args; int arg_count; } method;
-
-        /* NODE_IF */
-        struct { struct ASTNode *cond; struct ASTNode **then_stmts; int then_count;
-                 struct ASTNode **else_stmts; int else_count; } if_stmt;
-
-        /* NODE_WHILE */
-        struct { struct ASTNode *cond; struct ASTNode **body; int body_count; } while_loop;
-
-        /* NODE_FOR */
-        struct { char *var; struct ASTNode *iterable;
-                 struct ASTNode **body; int body_count; } for_loop;
-
-        /* NODE_FUNCTION_DEF */
-        struct { char *name; char **params; int param_count;
-                 struct ASTNode **body; int body_count; } func_def;
-
-        /* NODE_FUNCTION_CALL */
-        struct { char *name; struct ASTNode **args; int arg_count; } func_call;
-
-        /* NODE_RETURN */
-        struct { struct ASTNode *value; } ret;
-
-        /* NODE_CLASS_DEF */
-        struct { char *name; struct ASTNode **methods; int method_count; } class_def;
-
-        /* NODE_NEW_INSTANCE */
-        struct { char *class_name; struct ASTNode **args; int arg_count; } new_inst;
-
-        /* NODE_TRY_CATCH */
-        struct { struct ASTNode **try_stmts; int try_count;
-                 char *catch_var;
-                 struct ASTNode **catch_stmts; int catch_count; } try_catch;
-
-        /* NODE_THROW */
-        struct { struct ASTNode *value; } throw_stmt;
+        struct {
+            char *name;
+            TokenType op;
+            ASTNode *value;
+        } comp_assign;
 
         /* NODE_PRINT */
-        struct { struct ASTNode *expr; } print_stmt;
+        ASTNode *print_expr;
+
+        /* NODE_IF */
+        struct {
+            ASTNode *condition;
+            ASTNode **then_body;
+            int then_count;
+            ASTNode **else_body;
+            int else_count;
+        } if_stmt;
+
+        /* NODE_WHILE */
+        struct {
+            ASTNode *condition;
+            ASTNode **body;
+            int body_count;
+        } while_loop;
+
+        /* NODE_FOR */
+        struct {
+            char *var;
+            ASTNode *iterable;
+            ASTNode **body;
+            int body_count;
+        } for_loop;
+
+        /* NODE_FUNC_DEF */
+        struct {
+            char *name;
+            Param *params;
+            int param_count;
+            ASTNode **body;
+            int body_count;
+        } func_def;
+
+        /* NODE_FUNC_CALL */
+        struct {
+            char *name;
+            ASTNode **args;
+            int arg_count;
+        } func_call;
+
+        /* NODE_RETURN */
+        ASTNode *return_val; /* may be NULL */
 
         /* NODE_IMPORT */
-        struct { char *path; } import_stmt;
+        char *import_path;
+
+        /* NODE_TRY_CATCH */
+        struct {
+            ASTNode **try_body;
+            int try_count;
+            char *catch_var;   /* may be NULL */
+            ASTNode **catch_body;
+            int catch_count;
+        } try_catch;
+
+        /* NODE_THROW */
+        ASTNode *throw_val;
+
+        /* NODE_CLASS */
+        struct {
+            char *name;
+            ASTNode **methods;   /* each is NODE_FUNC_DEF */
+            int method_count;
+        } class_def;
+
+        /* NODE_NEW */
+        struct {
+            char *class_name;
+            ASTNode **args;
+            int arg_count;
+        } new_inst;
+
+        /* NODE_ARRAY */
+        struct {
+            ASTNode **elements;
+            int count;
+        } array;
+
+        /* NODE_ARRAY_INDEX */
+        struct {
+            ASTNode *array_expr;
+            ASTNode *index;
+        } array_index;
+
+        /* NODE_OBJECT */
+        struct {
+            char **keys;
+            ASTNode **values;
+            int count;
+        } object;
+
+        /* NODE_OBJ_ACCESS */
+        struct {
+            ASTNode *obj;
+            char *key;       /* for dot notation */
+            ASTNode *key_expr; /* for bracket notation */
+            int is_bracket;
+        } obj_access;
+
+        /* NODE_OBJ_ASSIGN */
+        struct {
+            ASTNode *obj;
+            char *key;
+            ASTNode *key_expr;
+            ASTNode *value;
+            int is_bracket;
+        } obj_assign;
+
+        /* NODE_TERNARY */
+        struct {
+            ASTNode *condition;
+            ASTNode *then_expr;
+            ASTNode *else_expr;
+        } ternary;
+
+        /* NODE_STRING_INTERP */
+        struct {
+            ASTNode **parts;   /* alternating STRING nodes and expression nodes */
+            int count;
+        } interp;
 
         /* NODE_PROGRAM */
-        struct { struct ASTNode **stmts; int count; } program;
+        struct {
+            ASTNode **stmts;
+            int count;
+        } program;
     } as;
-} ASTNode;
+};
 
 typedef struct {
     Token *tokens;
-    int count;
-    int pos;
+    int token_count;
+    int current;
 } Parser;
 
-void parser_init(Parser *p, Token *tokens, int count);
-ASTNode *parser_parse(Parser *p);
-void ast_free(ASTNode *node);
+void     parser_init(Parser *p, Token *tokens, int count);
+ASTNode *parser_parse(Parser *p);          /* returns NODE_PROGRAM */
+ASTNode *parser_parse_expression(Parser *p); /* for REPL / string interpolation */
+void     ast_free(ASTNode *node);
 
 #endif

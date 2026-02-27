@@ -3,875 +3,976 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 #include <math.h>
+#include <stdarg.h>
 
-/* ---- helpers ---- */
+/* ---- error ---- */
 
-static ExecResult ok_val(Value *v) {
-    ExecResult r = { STATUS_OK, v };
-    return r;
+static void throw_exception(Interpreter *it, const char *msg) {
+    free(it->exception_msg);
+    it->exception_msg = strdup(msg);
+    it->exception_active = 1;
+    if (it->try_depth > 0) {
+        longjmp(it->try_stack[it->try_depth - 1], 1);
+    }
+    fprintf(stderr, "Uncaught exception: %s\n", msg);
+    exit(1);
 }
 
-static ExecResult ok_null(void) {
-    ExecResult r = { STATUS_OK, value_new_null() };
-    return r;
-}
-
-static ExecResult status_only(ExecStatus s) {
-    ExecResult r = { s, NULL };
-    return r;
-}
-
-static void runtime_error(Interpreter *interp, int line, const char *fmt, ...) {
-    (void)interp;
+static void runtime_error(Interpreter *it, int line, const char *fmt, ...) {
     char buf[1024];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    fprintf(stderr, "jung runtime error");
+
+    if (it->try_depth > 0) {
+        /* Inside a try block -- throw as exception */
+        char msg[1200];
+        if (line > 0) snprintf(msg, sizeof(msg), "[line %d] %s", line, buf);
+        else snprintf(msg, sizeof(msg), "%s", buf);
+        throw_exception(it, msg);
+    }
+
+    fprintf(stderr, "jit runtime error");
     if (line > 0) fprintf(stderr, " [line %d]", line);
     fprintf(stderr, ": %s\n", buf);
     exit(1);
 }
 
-/* ---- call user-defined function ---- */
+/* ---- scope management ---- */
 
-static ExecResult call_function(Interpreter *interp, Value *fn, Value **args, int argc) {
-    if (fn->type != VAL_FUNCTION) {
-        ExecResult r = { STATUS_THROW, value_new_string("not a function") };
-        return r;
+static void push_scope(Interpreter *it) {
+    if (it->scope_depth >= MAX_SCOPES - 1) {
+        runtime_error(it, 0, "scope overflow");
     }
-
-    interp->call_depth++;
-    if (interp->call_depth > 200) {
-        interp->call_depth--;
-        runtime_error(interp, 0, "stack overflow (max 200 call depth)");
-    }
-
-    Table *saved = interp->variables;
-    interp->variables = table_copy(saved);
-
-    for (int i = 0; i < fn->as.function.param_count; i++) {
-        if (i < argc) {
-            table_set(interp->variables, fn->as.function.params[i], args[i]);
-        } else {
-            Value *null = value_new_null();
-            table_set(interp->variables, fn->as.function.params[i], null);
-            value_release(null);
-        }
-    }
-
-    ExecResult r = exec_stmts(interp, fn->as.function.body_stmts, fn->as.function.body_count);
-
-    if (r.status == STATUS_RETURN) r.status = STATUS_OK;
-    if (!r.value) r.value = value_new_null();
-
-    table_free(interp->variables);
-    interp->variables = saved;
-    interp->call_depth--;
-
-    return r;
+    it->scope_depth++;
+    table_init(&it->scopes[it->scope_depth].vars);
 }
 
-/* ---- exec_node: evaluate any AST node ---- */
+static void pop_scope(Interpreter *it) {
+    if (it->scope_depth < 0) return;
+    table_free(&it->scopes[it->scope_depth].vars);
+    it->scope_depth--;
+}
 
-ExecResult exec_node(Interpreter *interp, ASTNode *node) {
-    if (!node) return ok_null();
+/* ---- variable access ---- */
+
+int interp_get_var(Interpreter *it, const char *name, Value *out) {
+    /* Search from current scope upward */
+    for (int i = it->scope_depth; i >= 0; i--) {
+        if (table_get(&it->scopes[i].vars, name, out)) return 1;
+    }
+    /* Check globals */
+    if (table_get(&it->globals, name, out)) return 1;
+    return 0;
+}
+
+void interp_set_var(Interpreter *it, const char *name, Value val) {
+    /* Find existing var in any scope and update it */
+    for (int i = it->scope_depth; i >= 0; i--) {
+        Value dummy;
+        if (table_get(&it->scopes[i].vars, name, &dummy)) {
+            table_set(&it->scopes[i].vars, name, val);
+            return;
+        }
+    }
+    /* Check globals */
+    Value dummy;
+    if (table_get(&it->globals, name, &dummy)) {
+        table_set(&it->globals, name, val);
+        return;
+    }
+    /* Define in current scope */
+    table_set(&it->scopes[it->scope_depth].vars, name, val);
+}
+
+void interp_def_var(Interpreter *it, const char *name, Value val) {
+    /* Always define in current scope */
+    table_set(&it->scopes[it->scope_depth].vars, name, val);
+}
+
+/* ---- forward declarations ---- */
+
+static Value eval_node(Interpreter *it, ASTNode *node);
+static void exec_stmts(Interpreter *it, ASTNode **stmts, int count);
+
+/* ---- call user function ---- */
+
+static Value call_function(Interpreter *it, FuncDef *fn, Value *args, int argc, int line) {
+    if (it->call_depth >= MAX_CALL_DEPTH) {
+        runtime_error(it, line, "stack overflow (max %d call depth)", MAX_CALL_DEPTH);
+    }
+    it->call_depth++;
+    push_scope(it);
+
+    /* Bind parameters */
+    for (int i = 0; i < fn->param_count; i++) {
+        if (i < argc) {
+            interp_def_var(it, fn->params[i].name, val_copy(args[i]));
+        } else if (fn->params[i].default_val) {
+            Value def = eval_node(it, fn->params[i].default_val);
+            interp_def_var(it, fn->params[i].name, def);
+        } else {
+            interp_def_var(it, fn->params[i].name, val_null());
+        }
+    }
+
+    /* Execute body */
+    it->return_flag = 0;
+    it->return_value = val_null();
+
+    exec_stmts(it, fn->body, fn->body_count);
+
+    Value result = val_null();
+    if (it->return_flag) {
+        result = it->return_value;
+        it->return_flag = 0;
+        it->return_value = val_null();
+    }
+
+    pop_scope(it);
+    it->call_depth--;
+    return result;
+}
+
+/* ---- eval ---- */
+
+static Value eval_node(Interpreter *it, ASTNode *node) {
+    if (!node) return val_null();
 
     switch (node->type) {
-
     case NODE_NUMBER:
-        return ok_val(value_new_number(node->as.number));
+        return val_number(node->as.number);
 
     case NODE_STRING:
-        return ok_val(value_new_string(node->as.string));
+        return val_string(node->as.string.str, node->as.string.len);
 
     case NODE_BOOL:
-        return ok_val(value_new_bool(node->as.boolean));
+        return val_bool(node->as.boolean);
 
     case NODE_NULL:
-        return ok_null();
+        return val_null();
 
     case NODE_THIS: {
-        if (interp->current_instance) {
-            value_retain(interp->current_instance);
-            return ok_val(interp->current_instance);
-        }
-        return ok_null();
+        if (it->this_obj) return val_copy(*it->this_obj);
+        return val_null();
     }
 
     case NODE_VARIABLE: {
-        Value *v = table_get(interp->variables, node->as.var_name);
-        if (v) { value_retain(v); return ok_val(v); }
-        v = table_get(interp->functions, node->as.var_name);
-        if (v) { value_retain(v); return ok_val(v); }
-        runtime_error(interp, node->line, "undefined variable '%s'", node->as.var_name);
-        return ok_null();
+        Value v;
+        if (interp_get_var(it, node->as.var_name, &v)) {
+            return val_copy(v);
+        }
+        /* Check functions */
+        if (table_get(&it->functions, node->as.var_name, &v)) {
+            return val_copy(v);
+        }
+        runtime_error(it, node->line, "undefined variable '%s'", node->as.var_name);
+        return val_null();
     }
 
     case NODE_ARRAY: {
-        Value *arr = value_new_array();
+        Value arr = val_array(node->as.array.count > 0 ? node->as.array.count : 8);
         for (int i = 0; i < node->as.array.count; i++) {
-            ExecResult r = exec_node(interp, node->as.array.elements[i]);
-            if (r.status != STATUS_OK) { value_release(arr); return r; }
-            value_array_push(arr, r.value);
-            value_release(r.value);
+            Value item = eval_node(it, node->as.array.elements[i]);
+            val_array_push(&arr, item);
         }
-        return ok_val(arr);
+        return arr;
     }
 
     case NODE_OBJECT: {
-        Value *obj = value_new_object();
+        Value obj = val_object();
         for (int i = 0; i < node->as.object.count; i++) {
-            ExecResult r = exec_node(interp, node->as.object.values[i]);
-            if (r.status != STATUS_OK) { value_release(obj); return r; }
-            value_object_set(obj, node->as.object.keys[i], r.value);
-            value_release(r.value);
+            Value v = eval_node(it, node->as.object.values[i]);
+            table_set(obj.as.object, node->as.object.keys[i], v);
         }
-        return ok_val(obj);
+        return obj;
     }
 
-    case NODE_BINARY_OP: {
+    case NODE_BINARY: {
+        Value left = eval_node(it, node->as.binary.left);
         TokenType op = node->as.binary.op;
 
         /* Short-circuit for and/or */
         if (op == TOKEN_AND) {
-            ExecResult lr = exec_node(interp, node->as.binary.left);
-            if (lr.status != STATUS_OK) return lr;
-            if (!value_is_truthy(lr.value)) {
-                value_release(lr.value);
-                return ok_val(value_new_bool(0));
-            }
-            value_release(lr.value);
-            ExecResult rr = exec_node(interp, node->as.binary.right);
-            if (rr.status != STATUS_OK) return rr;
-            int t = value_is_truthy(rr.value);
-            value_release(rr.value);
-            return ok_val(value_new_bool(t));
+            if (!val_is_truthy(left)) { val_free(&left); return val_bool(0); }
+            Value right = eval_node(it, node->as.binary.right);
+            int result = val_is_truthy(right);
+            val_free(&left); val_free(&right);
+            return val_bool(result);
         }
         if (op == TOKEN_OR) {
-            ExecResult lr = exec_node(interp, node->as.binary.left);
-            if (lr.status != STATUS_OK) return lr;
-            if (value_is_truthy(lr.value)) return lr;
-            value_release(lr.value);
-            return exec_node(interp, node->as.binary.right);
+            if (val_is_truthy(left)) return left;
+            val_free(&left);
+            return eval_node(it, node->as.binary.right);
         }
 
-        ExecResult lr = exec_node(interp, node->as.binary.left);
-        if (lr.status != STATUS_OK) return lr;
-        ExecResult rr = exec_node(interp, node->as.binary.right);
-        if (rr.status != STATUS_OK) { value_release(lr.value); return rr; }
-
-        Value *left = lr.value;
-        Value *right = rr.value;
+        Value right = eval_node(it, node->as.binary.right);
 
         /* String concatenation */
-        if (op == TOKEN_PLUS && (left->type == VAL_STRING || right->type == VAL_STRING)) {
-            char *ls = value_to_string(left);
-            char *rs = value_to_string(right);
+        if (op == TOKEN_PLUS && (left.type == VAL_STRING || right.type == VAL_STRING)) {
+            char *ls = val_to_string(left);
+            char *rs = val_to_string(right);
             int llen = (int)strlen(ls);
             int rlen = (int)strlen(rs);
-            char *out = malloc(llen + rlen + 1);
-            memcpy(out, ls, llen);
-            memcpy(out + llen, rs, rlen);
+            char *out = malloc((size_t)(llen + rlen + 1));
+            memcpy(out, ls, (size_t)llen);
+            memcpy(out + llen, rs, (size_t)rlen);
             out[llen + rlen] = '\0';
             free(ls); free(rs);
-            value_release(left); value_release(right);
-            return ok_val(value_new_string_owned(out));
+            val_free(&left); val_free(&right);
+            return val_string_take(out, llen + rlen);
         }
 
-        /* Numeric ops */
-        if (left->type == VAL_NUMBER && right->type == VAL_NUMBER) {
-            double l = left->as.number, r = right->as.number;
-            value_release(left); value_release(right);
+        /* Numeric operations */
+        if (left.type == VAL_NUMBER && right.type == VAL_NUMBER) {
+            double l = left.as.number, r = right.as.number;
             switch (op) {
-                case TOKEN_PLUS:     return ok_val(value_new_number(l + r));
-                case TOKEN_MINUS:    return ok_val(value_new_number(l - r));
-                case TOKEN_MULTIPLY: return ok_val(value_new_number(l * r));
+                case TOKEN_PLUS:     return val_number(l + r);
+                case TOKEN_MINUS:    return val_number(l - r);
+                case TOKEN_MULTIPLY: return val_number(l * r);
                 case TOKEN_DIVIDE:
-                    if (r == 0) runtime_error(interp, node->line, "division by zero");
-                    return ok_val(value_new_number(l / r));
+                    if (r == 0) runtime_error(it, node->line, "division by zero");
+                    return val_number(l / r);
                 case TOKEN_MODULO:
-                    if (r == 0) runtime_error(interp, node->line, "modulo by zero");
-                    return ok_val(value_new_number(fmod(l, r)));
-                case TOKEN_GT:  return ok_val(value_new_bool(l > r));
-                case TOKEN_LT:  return ok_val(value_new_bool(l < r));
-                case TOKEN_GTE: return ok_val(value_new_bool(l >= r));
-                case TOKEN_LTE: return ok_val(value_new_bool(l <= r));
-                case TOKEN_EQ:  return ok_val(value_new_bool(l == r));
-                case TOKEN_NEQ: return ok_val(value_new_bool(l != r));
+                    if (r == 0) runtime_error(it, node->line, "modulo by zero");
+                    return val_number(fmod(l, r));
+                case TOKEN_GT:  return val_bool(l > r);
+                case TOKEN_LT:  return val_bool(l < r);
+                case TOKEN_GTE: return val_bool(l >= r);
+                case TOKEN_LTE: return val_bool(l <= r);
+                case TOKEN_EQ:  return val_bool(l == r);
+                case TOKEN_NEQ: return val_bool(l != r);
                 default: break;
             }
         }
 
         /* Equality for non-numbers */
         if (op == TOKEN_EQ) {
-            int eq = value_equals(left, right);
-            value_release(left); value_release(right);
-            return ok_val(value_new_bool(eq));
+            int result = val_equal(left, right);
+            val_free(&left); val_free(&right);
+            return val_bool(result);
         }
         if (op == TOKEN_NEQ) {
-            int eq = value_equals(left, right);
-            value_release(left); value_release(right);
-            return ok_val(value_new_bool(!eq));
+            int result = !val_equal(left, right);
+            val_free(&left); val_free(&right);
+            return val_bool(result);
         }
 
-        value_release(left); value_release(right);
-        runtime_error(interp, node->line, "unsupported operand types for binary op");
-        return ok_null();
+        runtime_error(it, node->line, "unsupported operand types for binary op");
+        return val_null();
     }
 
-    case NODE_UNARY_OP: {
-        ExecResult r = exec_node(interp, node->as.unary.operand);
-        if (r.status != STATUS_OK) return r;
+    case NODE_UNARY: {
+        Value operand = eval_node(it, node->as.unary.operand);
         if (node->as.unary.op == TOKEN_MINUS) {
-            if (r.value->type != VAL_NUMBER)
-                runtime_error(interp, node->line, "unary minus requires number");
-            double n = -r.value->as.number;
-            value_release(r.value);
-            return ok_val(value_new_number(n));
+            if (operand.type != VAL_NUMBER)
+                runtime_error(it, node->line, "unary minus requires number");
+            return val_number(-operand.as.number);
         }
         if (node->as.unary.op == TOKEN_NOT) {
-            int t = !value_is_truthy(r.value);
-            value_release(r.value);
-            return ok_val(value_new_bool(t));
+            int result = !val_is_truthy(operand);
+            val_free(&operand);
+            return val_bool(result);
         }
-        value_release(r.value);
-        return ok_null();
+        return val_null();
     }
 
     case NODE_TERNARY: {
-        ExecResult cr = exec_node(interp, node->as.ternary.cond);
-        if (cr.status != STATUS_OK) return cr;
-        int truthy = value_is_truthy(cr.value);
-        value_release(cr.value);
-        return exec_node(interp, truthy ? node->as.ternary.then_expr : node->as.ternary.else_expr);
+        Value cond = eval_node(it, node->as.ternary.condition);
+        int truthy = val_is_truthy(cond);
+        val_free(&cond);
+        if (truthy) return eval_node(it, node->as.ternary.then_expr);
+        return eval_node(it, node->as.ternary.else_expr);
     }
 
     case NODE_STRING_INTERP: {
         int cap = 256, len = 0;
-        char *buf = malloc(cap);
+        char *buf = malloc((size_t)cap);
         buf[0] = '\0';
+
         for (int i = 0; i < node->as.interp.count; i++) {
-            ExecResult r = exec_node(interp, node->as.interp.parts[i]);
-            if (r.status != STATUS_OK) { free(buf); return r; }
-            char *s = value_to_string(r.value);
+            Value part = eval_node(it, node->as.interp.parts[i]);
+            char *s = val_to_string(part);
             int slen = (int)strlen(s);
-            while (len + slen + 1 >= cap) { cap *= 2; buf = realloc(buf, cap); }
-            memcpy(buf + len, s, slen);
+            while (len + slen + 1 >= cap) { cap *= 2; buf = realloc(buf, (size_t)cap); }
+            memcpy(buf + len, s, (size_t)slen);
             len += slen;
             free(s);
-            value_release(r.value);
+            val_free(&part);
         }
         buf[len] = '\0';
-        return ok_val(value_new_string_owned(buf));
+        return val_string_take(buf, len);
     }
 
-    case NODE_INDEX: {
-        ExecResult ar = exec_node(interp, node->as.index.object);
-        if (ar.status != STATUS_OK) return ar;
-        ExecResult ir = exec_node(interp, node->as.index.index);
-        if (ir.status != STATUS_OK) { value_release(ar.value); return ir; }
+    case NODE_ARRAY_INDEX: {
+        Value arr = eval_node(it, node->as.array_index.array_expr);
+        Value idx = eval_node(it, node->as.array_index.index);
 
-        Value *container = ar.value;
-        Value *idx = ir.value;
-
-        if (container->type == VAL_ARRAY && idx->type == VAL_NUMBER) {
-            int i = (int)idx->as.number;
-            if (i < 0) i += container->as.array.length;
-            Value *item = value_array_get(container, i);
-            Value *result = item ? (value_retain(item), item) : value_new_null();
-            value_release(container); value_release(idx);
-            return ok_val(result);
-        }
-        if (container->type == VAL_OBJECT && idx->type == VAL_STRING) {
-            Value *item = value_object_get(container, idx->as.string);
-            Value *result = item ? (value_retain(item), item) : value_new_null();
-            value_release(container); value_release(idx);
-            return ok_val(result);
-        }
-        if (container->type == VAL_STRING && idx->type == VAL_NUMBER) {
-            int i = (int)idx->as.number;
-            int slen = (int)strlen(container->as.string);
-            if (i < 0) i += slen;
-            Value *result;
-            if (i >= 0 && i < slen) {
-                char ch[2] = { container->as.string[i], '\0' };
-                result = value_new_string(ch);
-            } else {
-                result = value_new_null();
+        if (arr.type == VAL_ARRAY && idx.type == VAL_NUMBER) {
+            int i = (int)idx.as.number;
+            if (i < 0) i += arr.as.array.count;
+            Value result = val_null();
+            if (i >= 0 && i < arr.as.array.count) {
+                result = val_copy(arr.as.array.items[i]);
             }
-            value_release(container); value_release(idx);
-            return ok_val(result);
+            val_free(&arr); val_free(&idx);
+            return result;
         }
-        value_release(container); value_release(idx);
-        return ok_null();
+        if (arr.type == VAL_OBJECT && idx.type == VAL_STRING) {
+            Value result = val_null();
+            Value v;
+            if (table_get(arr.as.object, idx.as.string.str, &v)) {
+                result = val_copy(v);
+            }
+            val_free(&arr); val_free(&idx);
+            return result;
+        }
+        if (arr.type == VAL_STRING && idx.type == VAL_NUMBER) {
+            int i = (int)idx.as.number;
+            if (i < 0) i += arr.as.string.len;
+            if (i >= 0 && i < arr.as.string.len) {
+                Value result = val_string(arr.as.string.str + i, 1);
+                val_free(&arr); val_free(&idx);
+                return result;
+            }
+            val_free(&arr); val_free(&idx);
+            return val_null();
+        }
+        val_free(&arr); val_free(&idx);
+        return val_null();
     }
 
-    case NODE_DOT_ACCESS: {
-        ExecResult r = exec_node(interp, node->as.dot.object);
-        if (r.status != STATUS_OK) return r;
-        Value *obj = r.value;
-
-        if (strcmp(node->as.dot.field, "length") == 0) {
-            double len = 0;
-            if (obj->type == VAL_STRING) len = strlen(obj->as.string);
-            else if (obj->type == VAL_ARRAY) len = obj->as.array.length;
-            else if (obj->type == VAL_OBJECT) len = obj->as.object.length;
-            value_release(obj);
-            return ok_val(value_new_number(len));
+    case NODE_OBJ_ACCESS: {
+        Value obj = eval_node(it, node->as.obj_access.obj);
+        if (obj.type == VAL_OBJECT) {
+            Value v;
+            if (node->as.obj_access.key && !node->as.obj_access.is_bracket) {
+                /* Check for "length" property on objects */
+                if (strcmp(node->as.obj_access.key, "length") == 0) {
+                    int count = obj.as.object->count;
+                    val_free(&obj);
+                    return val_number(count);
+                }
+                if (table_get(obj.as.object, node->as.obj_access.key, &v)) {
+                    Value result = val_copy(v);
+                    val_free(&obj);
+                    return result;
+                }
+            } else if (node->as.obj_access.key_expr) {
+                Value key = eval_node(it, node->as.obj_access.key_expr);
+                if (key.type == VAL_STRING) {
+                    if (table_get(obj.as.object, key.as.string.str, &v)) {
+                        Value result = val_copy(v);
+                        val_free(&obj); val_free(&key);
+                        return result;
+                    }
+                }
+                val_free(&key);
+            }
+            val_free(&obj);
+            return val_null();
         }
-
-        if (obj->type == VAL_OBJECT) {
-            Value *v = value_object_get(obj, node->as.dot.field);
-            if (v) {
-                value_retain(v);
-                value_release(obj);
-                return ok_val(v);
+        /* .length on string/array */
+        if (node->as.obj_access.key && strcmp(node->as.obj_access.key, "length") == 0) {
+            if (obj.type == VAL_STRING) {
+                int len = obj.as.string.len;
+                val_free(&obj);
+                return val_number(len);
+            }
+            if (obj.type == VAL_ARRAY) {
+                int cnt = obj.as.array.count;
+                val_free(&obj);
+                return val_number(cnt);
             }
         }
-        value_release(obj);
-        return ok_null();
+        val_free(&obj);
+        return val_null();
     }
 
-    case NODE_METHOD_CALL: {
-        ExecResult r = exec_node(interp, node->as.method.object);
-        if (r.status != STATUS_OK) return r;
-        Value *obj = r.value;
+    case NODE_FUNC_CALL: {
+        char *name = node->as.func_call.name;
+        int argc = node->as.func_call.arg_count;
 
         /* Evaluate arguments */
-        int argc = node->as.method.arg_count;
-        Value **args = NULL;
+        Value *args = NULL;
         if (argc > 0) {
-            args = malloc(argc * sizeof(Value *));
+            args = malloc(sizeof(Value) * (size_t)argc);
             for (int i = 0; i < argc; i++) {
-                ExecResult ar = exec_node(interp, node->as.method.args[i]);
-                if (ar.status != STATUS_OK) {
-                    for (int j = 0; j < i; j++) value_release(args[j]);
-                    free(args);
-                    value_release(obj);
-                    return ar;
-                }
-                args[i] = ar.value;
+                args[i] = eval_node(it, node->as.func_call.args[i]);
             }
         }
 
-        /* Check class methods first */
-        if (obj->type == VAL_OBJECT) {
-            Value *class_name = value_object_get(obj, "__class__");
-            if (class_name && class_name->type == VAL_STRING) {
-                Value *class_obj = table_get(interp->classes, class_name->as.string);
-                if (class_obj && class_obj->type == VAL_OBJECT) {
-                    Value *method = value_object_get(class_obj, node->as.method.method);
-                    if (method && method->type == VAL_FUNCTION) {
-                        Value *saved_instance = interp->current_instance;
-                        interp->current_instance = obj;
-                        ExecResult mr = call_function(interp, method, args, argc);
-                        interp->current_instance = saved_instance;
-                        for (int i = 0; i < argc; i++) value_release(args[i]);
+        /* For method calls (__method_*), check class methods first */
+        if (strncmp(name, "__method_", 9) == 0 && argc > 0 && args[0].type == VAL_OBJECT) {
+            Value class_name_val;
+            if (table_get(args[0].as.object, "__class__", &class_name_val) && class_name_val.type == VAL_STRING) {
+                Value class_val;
+                if (table_get(&it->classes, class_name_val.as.string.str, &class_val) && class_val.type == VAL_OBJECT) {
+                    const char *method_name = name + 9;
+                    Value method_val;
+                    if (table_get(class_val.as.object, method_name, &method_val) && method_val.type == VAL_FUNCTION) {
+                        Value *this_save = it->this_obj;
+                        it->this_obj = &args[0];
+                        Value result = call_function(it, method_val.as.func, args + 1, argc - 1, node->line);
+                        it->this_obj = this_save;
+                        for (int i = 0; i < argc; i++) val_free(&args[i]);
                         free(args);
-                        value_release(obj);
-                        return mr;
+                        return result;
                     }
                 }
             }
         }
 
-        /* Try builtin methods */
-        ExecResult mr;
-        if (builtin_method(interp, obj, node->as.method.method, args, argc, &mr)) {
-            for (int i = 0; i < argc; i++) value_release(args[i]);
-            free(args);
-            value_release(obj);
-            return mr;
+        /* Special handling for map/filter/reduce.
+         * Supports both orderings:
+         *   map(arr, fn)       -- arr first
+         *   map("fn_name", arr) -- fn name first (Python API)
+         */
+        if (strcmp(name, "map") == 0 && argc >= 2) {
+            Value arr, fn_ref;
+            if (args[0].type == VAL_ARRAY) { arr = args[0]; fn_ref = args[1]; }
+            else { arr = args[1]; fn_ref = args[0]; }
+
+            FuncDef *fndef = NULL;
+            if (fn_ref.type == VAL_FUNCTION) {
+                fndef = fn_ref.as.func;
+            } else if (fn_ref.type == VAL_STRING) {
+                Value fn_lookup;
+                if (table_get(&it->functions, fn_ref.as.string.str, &fn_lookup) && fn_lookup.type == VAL_FUNCTION)
+                    fndef = fn_lookup.as.func;
+            }
+            if (arr.type == VAL_ARRAY && fndef) {
+                Value result = val_array(arr.as.array.count);
+                for (int i = 0; i < arr.as.array.count; i++) {
+                    Value item = val_copy(arr.as.array.items[i]);
+                    Value mapped = call_function(it, fndef, &item, 1, node->line);
+                    val_array_push(&result, mapped);
+                    val_free(&item);
+                }
+                for (int i = 0; i < argc; i++) val_free(&args[i]);
+                free(args);
+                return result;
+            }
+        }
+        if (strcmp(name, "filter") == 0 && argc >= 2) {
+            Value arr, fn_ref;
+            if (args[0].type == VAL_ARRAY) { arr = args[0]; fn_ref = args[1]; }
+            else { arr = args[1]; fn_ref = args[0]; }
+
+            FuncDef *fndef = NULL;
+            if (fn_ref.type == VAL_FUNCTION) fndef = fn_ref.as.func;
+            else if (fn_ref.type == VAL_STRING) {
+                Value fn_lookup;
+                if (table_get(&it->functions, fn_ref.as.string.str, &fn_lookup) && fn_lookup.type == VAL_FUNCTION)
+                    fndef = fn_lookup.as.func;
+            }
+            if (arr.type == VAL_ARRAY && fndef) {
+                Value result = val_array(arr.as.array.count);
+                for (int i = 0; i < arr.as.array.count; i++) {
+                    Value item = val_copy(arr.as.array.items[i]);
+                    Value pred = call_function(it, fndef, &item, 1, node->line);
+                    if (val_is_truthy(pred)) {
+                        val_array_push(&result, val_copy(arr.as.array.items[i]));
+                    }
+                    val_free(&item); val_free(&pred);
+                }
+                for (int i = 0; i < argc; i++) val_free(&args[i]);
+                free(args);
+                return result;
+            }
+        }
+        if (strcmp(name, "reduce") == 0 && argc >= 3) {
+            /* reduce("fn", arr, init) or reduce(arr, fn, init) */
+            Value arr, fn_ref, acc;
+            if (args[0].type == VAL_ARRAY) { arr = args[0]; fn_ref = args[1]; acc = val_copy(args[2]); }
+            else { fn_ref = args[0]; arr = args[1]; acc = val_copy(args[2]); }
+
+            FuncDef *fndef = NULL;
+            if (fn_ref.type == VAL_FUNCTION) fndef = fn_ref.as.func;
+            else if (fn_ref.type == VAL_STRING) {
+                Value fn_lookup;
+                if (table_get(&it->functions, fn_ref.as.string.str, &fn_lookup) && fn_lookup.type == VAL_FUNCTION)
+                    fndef = fn_lookup.as.func;
+            }
+            if (arr.type == VAL_ARRAY && fndef) {
+                for (int i = 0; i < arr.as.array.count; i++) {
+                    Value call_args[2];
+                    call_args[0] = acc;
+                    call_args[1] = val_copy(arr.as.array.items[i]);
+                    acc = call_function(it, fndef, call_args, 2, node->line);
+                    val_free(&call_args[0]); val_free(&call_args[1]);
+                }
+                for (int i = 0; i < argc; i++) val_free(&args[i]);
+                free(args);
+                return acc;
+            }
+            val_free(&acc);
         }
 
-        for (int i = 0; i < argc; i++) value_release(args[i]);
-        free(args);
-        runtime_error(interp, node->line, "unknown method '%s'", node->as.method.method);
-        value_release(obj);
-        return ok_null();
-    }
+        /* Check builtins */
+        Value bfn;
+        if (table_get(&it->builtins, name, &bfn) && bfn.type == VAL_BUILTIN) {
+            Value result = bfn.as.builtin(args, argc);
+            for (int i = 0; i < argc; i++) val_free(&args[i]);
+            free(args);
+            return result;
+        }
 
-    case NODE_FUNCTION_CALL: {
-        char *name = node->as.func_call.name;
-        int argc = node->as.func_call.arg_count;
+        /* Check user-defined functions */
+        Value fn_val;
+        if (table_get(&it->functions, name, &fn_val) && fn_val.type == VAL_FUNCTION) {
+            Value result = call_function(it, fn_val.as.func, args, argc, node->line);
+            for (int i = 0; i < argc; i++) val_free(&args[i]);
+            free(args);
+            return result;
+        }
 
-        /* Evaluate arguments */
-        Value **args = NULL;
-        if (argc > 0) {
-            args = malloc(argc * sizeof(Value *));
-            for (int i = 0; i < argc; i++) {
-                ExecResult r = exec_node(interp, node->as.func_call.args[i]);
-                if (r.status != STATUS_OK) {
-                    for (int j = 0; j < i; j++) value_release(args[j]);
-                    free(args);
-                    return r;
-                }
-                args[i] = r.value;
+        /* Check if it's a variable holding a function */
+        Value var_val;
+        if (interp_get_var(it, name, &var_val)) {
+            if (var_val.type == VAL_FUNCTION) {
+                Value result = call_function(it, var_val.as.func, args, argc, node->line);
+                for (int i = 0; i < argc; i++) val_free(&args[i]);
+                free(args);
+                return result;
+            }
+            if (var_val.type == VAL_BUILTIN) {
+                Value result = var_val.as.builtin(args, argc);
+                for (int i = 0; i < argc; i++) val_free(&args[i]);
+                free(args);
+                return result;
             }
         }
 
-        /* Try builtins first */
-        ExecResult br;
-        if (builtin_call(interp, name, args, argc, &br)) {
-            for (int i = 0; i < argc; i++) value_release(args[i]);
-            free(args);
-            return br;
-        }
-
-        /* Try user-defined functions */
-        Value *fn = table_get(interp->functions, name);
-        if (fn && fn->type == VAL_FUNCTION) {
-            ExecResult fr = call_function(interp, fn, args, argc);
-            for (int i = 0; i < argc; i++) value_release(args[i]);
-            free(args);
-            return fr;
-        }
-
-        /* Try variables holding functions */
-        Value *var = table_get(interp->variables, name);
-        if (var && var->type == VAL_FUNCTION) {
-            ExecResult fr = call_function(interp, var, args, argc);
-            for (int i = 0; i < argc; i++) value_release(args[i]);
-            free(args);
-            return fr;
-        }
-
-        for (int i = 0; i < argc; i++) value_release(args[i]);
+        /* Not found */
+        for (int i = 0; i < argc; i++) val_free(&args[i]);
         free(args);
-        runtime_error(interp, node->line, "undefined function '%s'", name);
-        return ok_null();
+        runtime_error(it, node->line, "undefined function '%s'", name);
+        return val_null();
     }
 
-    case NODE_NEW_INSTANCE: {
-        char *cname = node->as.new_inst.class_name;
-        Value *class_obj = table_get(interp->classes, cname);
-        if (!class_obj || class_obj->type != VAL_OBJECT)
-            runtime_error(interp, node->line, "undefined class '%s'", cname);
+    case NODE_NEW: {
+        char *class_name = node->as.new_inst.class_name;
+        Value class_val;
+        if (!table_get(&it->classes, class_name, &class_val) || class_val.type != VAL_OBJECT) {
+            runtime_error(it, node->line, "undefined class '%s'", class_name);
+        }
 
-        Value *instance = value_new_object();
-        Value *cn = value_new_string(cname);
-        value_object_set(instance, "__class__", cn);
-        value_release(cn);
+        /* Create instance object */
+        Value instance = val_object();
+        table_set(instance.as.object, "__class__", val_string(class_name, (int)strlen(class_name)));
 
         /* Evaluate constructor args */
         int argc = node->as.new_inst.arg_count;
-        Value **args = NULL;
+        Value *args = NULL;
         if (argc > 0) {
-            args = malloc(argc * sizeof(Value *));
+            args = malloc(sizeof(Value) * (size_t)argc);
             for (int i = 0; i < argc; i++) {
-                ExecResult r = exec_node(interp, node->as.new_inst.args[i]);
-                if (r.status != STATUS_OK) {
-                    for (int j = 0; j < i; j++) value_release(args[j]);
-                    free(args);
-                    value_release(instance);
-                    return r;
-                }
-                args[i] = r.value;
+                args[i] = eval_node(it, node->as.new_inst.args[i]);
             }
         }
 
-        /* Call constructor if exists */
-        Value *ctor = value_object_get(class_obj, "constructor");
-        if (!ctor) ctor = value_object_get(class_obj, "init");
-        if (ctor && ctor->type == VAL_FUNCTION) {
-            Value *saved = interp->current_instance;
-            interp->current_instance = instance;
-            ExecResult cr = call_function(interp, ctor, args, argc);
-            interp->current_instance = saved;
-            if (cr.value) value_release(cr.value);
+        /* Call constructor if exists (try "constructor" then "init") */
+        Value ctor;
+        if ((table_get(class_val.as.object, "constructor", &ctor) && ctor.type == VAL_FUNCTION) ||
+            (table_get(class_val.as.object, "init", &ctor) && ctor.type == VAL_FUNCTION)) {
+            Value *this_save = it->this_obj;
+            it->this_obj = &instance;
+            call_function(it, ctor.as.func, args, argc, node->line);
+            it->this_obj = this_save;
         }
 
-        for (int i = 0; i < argc; i++) value_release(args[i]);
+        for (int i = 0; i < argc; i++) val_free(&args[i]);
         free(args);
-        return ok_val(instance);
+        return instance;
     }
 
-    /* ---- statement nodes handled in exec_node ---- */
+    default:
+        break;
+    }
 
+    return val_null();
+}
+
+/* ---- statement execution ---- */
+
+static void exec_stmt(Interpreter *it, ASTNode *node) {
+    if (!node) return;
+
+    switch (node->type) {
     case NODE_PRINT: {
-        ExecResult r = exec_node(interp, node->as.print_stmt.expr);
-        if (r.status != STATUS_OK) return r;
-        char *s = value_to_string(r.value);
+        Value v = eval_node(it, node->as.print_expr);
+        char *s = val_to_string(v);
         printf("%s\n", s);
         free(s);
-        value_release(r.value);
-        return ok_null();
+        val_free(&v);
+        break;
     }
 
-    case NODE_ASSIGNMENT: {
-        ExecResult r = exec_node(interp, node->as.assign.value);
-        if (r.status != STATUS_OK) return r;
-        table_set(interp->variables, node->as.assign.name, r.value);
-        value_release(r.value);
-        return ok_null();
+    case NODE_ASSIGN: {
+        Value v = eval_node(it, node->as.assign.value);
+        /* Check if this is a 'let' (define) or reassignment */
+        /* We use interp_set_var which finds existing or creates in current scope */
+        interp_set_var(it, node->as.assign.name, v);
+        break;
     }
 
     case NODE_COMPOUND_ASSIGN: {
-        Value *current = table_get(interp->variables, node->as.compound.name);
-        if (!current)
-            runtime_error(interp, node->line, "undefined variable '%s'", node->as.compound.name);
+        Value current;
+        if (!interp_get_var(it, node->as.comp_assign.name, &current)) {
+            runtime_error(it, node->line, "undefined variable '%s'", node->as.comp_assign.name);
+        }
+        Value rhs = eval_node(it, node->as.comp_assign.value);
 
-        ExecResult r = exec_node(interp, node->as.compound.value);
-        if (r.status != STATUS_OK) return r;
-
-        Value *result = NULL;
-        if (current->type == VAL_NUMBER && r.value->type == VAL_NUMBER) {
-            double l = current->as.number, rv = r.value->as.number;
-            switch (node->as.compound.op) {
-                case TOKEN_PLUS_ASSIGN:     result = value_new_number(l + rv); break;
-                case TOKEN_MINUS_ASSIGN:    result = value_new_number(l - rv); break;
-                case TOKEN_MULTIPLY_ASSIGN: result = value_new_number(l * rv); break;
+        Value result;
+        if (current.type == VAL_NUMBER && rhs.type == VAL_NUMBER) {
+            switch (node->as.comp_assign.op) {
+                case TOKEN_PLUS_ASSIGN:     result = val_number(current.as.number + rhs.as.number); break;
+                case TOKEN_MINUS_ASSIGN:    result = val_number(current.as.number - rhs.as.number); break;
+                case TOKEN_MULTIPLY_ASSIGN: result = val_number(current.as.number * rhs.as.number); break;
                 case TOKEN_DIVIDE_ASSIGN:
-                    if (rv == 0) runtime_error(interp, node->line, "division by zero");
-                    result = value_new_number(l / rv); break;
-                default: result = value_new_null(); break;
+                    if (rhs.as.number == 0) runtime_error(it, node->line, "division by zero");
+                    result = val_number(current.as.number / rhs.as.number);
+                    break;
+                default:
+                    result = val_null();
             }
-        } else if (node->as.compound.op == TOKEN_PLUS_ASSIGN &&
-                   (current->type == VAL_STRING || r.value->type == VAL_STRING)) {
-            char *ls = value_to_string(current);
-            char *rs = value_to_string(r.value);
-            int llen = (int)strlen(ls), rlen = (int)strlen(rs);
-            char *out = malloc(llen + rlen + 1);
-            memcpy(out, ls, llen);
-            memcpy(out + llen, rs, rlen);
+        } else if (node->as.comp_assign.op == TOKEN_PLUS_ASSIGN &&
+                   (current.type == VAL_STRING || rhs.type == VAL_STRING)) {
+            char *ls = val_to_string(current);
+            char *rs = val_to_string(rhs);
+            int llen = (int)strlen(ls);
+            int rlen = (int)strlen(rs);
+            char *out = malloc((size_t)(llen + rlen + 1));
+            memcpy(out, ls, (size_t)llen);
+            memcpy(out + llen, rs, (size_t)rlen);
             out[llen + rlen] = '\0';
             free(ls); free(rs);
-            result = value_new_string_owned(out);
+            result = val_string_take(out, llen + rlen);
         } else {
-            runtime_error(interp, node->line, "unsupported types for compound assignment");
-            result = value_new_null();
+            runtime_error(it, node->line, "unsupported types for compound assignment");
+            result = val_null();
         }
 
-        value_release(r.value);
-        table_set(interp->variables, node->as.compound.name, result);
-        value_release(result);
-        return ok_null();
+        val_free(&rhs);
+        interp_set_var(it, node->as.comp_assign.name, result);
+        break;
     }
 
-    case NODE_DOT_ASSIGN: {
-        if (node->as.dot_assign.is_bracket) {
-            /* Bracket assignment: object is a NODE_INDEX containing container + index expr */
-            ASTNode *idx_node = node->as.dot_assign.object;
-            ExecResult cr = exec_node(interp, idx_node->as.index.object);
-            if (cr.status != STATUS_OK) return cr;
-            ExecResult ir = exec_node(interp, idx_node->as.index.index);
-            if (ir.status != STATUS_OK) { value_release(cr.value); return ir; }
-            ExecResult vr = exec_node(interp, node->as.dot_assign.value);
-            if (vr.status != STATUS_OK) { value_release(cr.value); value_release(ir.value); return vr; }
+    case NODE_OBJ_ASSIGN: {
+        Value obj = eval_node(it, node->as.obj_assign.obj);
+        Value val = eval_node(it, node->as.obj_assign.value);
 
-            if (cr.value->type == VAL_ARRAY && ir.value->type == VAL_NUMBER) {
-                int i = (int)ir.value->as.number;
-                if (i < 0) i += cr.value->as.array.length;
-                value_array_set(cr.value, i, vr.value);
-            } else if (cr.value->type == VAL_OBJECT && ir.value->type == VAL_STRING) {
-                value_object_set(cr.value, ir.value->as.string, vr.value);
+        if (obj.type == VAL_OBJECT) {
+            if (node->as.obj_assign.is_bracket && node->as.obj_assign.key_expr) {
+                Value key = eval_node(it, node->as.obj_assign.key_expr);
+                if (key.type == VAL_STRING) {
+                    table_set(obj.as.object, key.as.string.str, val);
+                }
+                val_free(&key);
+            } else if (node->as.obj_assign.key) {
+                table_set(obj.as.object, node->as.obj_assign.key, val);
             }
-            value_release(cr.value);
-            value_release(ir.value);
-            value_release(vr.value);
-        } else {
-            /* Dot assignment: obj.field = value */
-            ExecResult or_ = exec_node(interp, node->as.dot_assign.object);
-            if (or_.status != STATUS_OK) return or_;
-            ExecResult vr = exec_node(interp, node->as.dot_assign.value);
-            if (vr.status != STATUS_OK) { value_release(or_.value); return vr; }
-
-            if (or_.value->type == VAL_OBJECT) {
-                value_object_set(or_.value, node->as.dot_assign.field, vr.value);
+        } else if (obj.type == VAL_ARRAY && node->as.obj_assign.is_bracket && node->as.obj_assign.key_expr) {
+            Value idx = eval_node(it, node->as.obj_assign.key_expr);
+            if (idx.type == VAL_NUMBER) {
+                int i = (int)idx.as.number;
+                if (i >= 0 && i < obj.as.array.count) {
+                    val_free(&obj.as.array.items[i]);
+                    obj.as.array.items[i] = val;
+                    val = val_null(); /* don't double-free */
+                }
             }
-            value_release(or_.value);
-            value_release(vr.value);
+            val_free(&idx);
         }
-        return ok_null();
+
+        /* We need to write back into the source variable if it was a variable reference */
+        /* The obj already points into the table entry due to pointer semantics */
+        val_free(&obj);
+        break;
     }
 
     case NODE_IF: {
-        ExecResult cr = exec_node(interp, node->as.if_stmt.cond);
-        if (cr.status != STATUS_OK) return cr;
-        int truthy = value_is_truthy(cr.value);
-        value_release(cr.value);
+        Value cond = eval_node(it, node->as.if_stmt.condition);
+        int truthy = val_is_truthy(cond);
+        val_free(&cond);
 
         if (truthy) {
-            return exec_stmts(interp, node->as.if_stmt.then_stmts, node->as.if_stmt.then_count);
-        } else if (node->as.if_stmt.else_stmts) {
-            return exec_stmts(interp, node->as.if_stmt.else_stmts, node->as.if_stmt.else_count);
+            push_scope(it);
+            exec_stmts(it, node->as.if_stmt.then_body, node->as.if_stmt.then_count);
+            pop_scope(it);
+        } else if (node->as.if_stmt.else_body) {
+            push_scope(it);
+            exec_stmts(it, node->as.if_stmt.else_body, node->as.if_stmt.else_count);
+            pop_scope(it);
         }
-        return ok_null();
+        break;
     }
 
     case NODE_WHILE: {
         while (1) {
-            ExecResult cr = exec_node(interp, node->as.while_loop.cond);
-            if (cr.status != STATUS_OK) return cr;
-            int truthy = value_is_truthy(cr.value);
-            value_release(cr.value);
+            Value cond = eval_node(it, node->as.while_loop.condition);
+            int truthy = val_is_truthy(cond);
+            val_free(&cond);
             if (!truthy) break;
 
-            ExecResult br = exec_stmts(interp, node->as.while_loop.body, node->as.while_loop.body_count);
-            if (br.value) value_release(br.value);
-            if (br.status == STATUS_BREAK) break;
-            if (br.status == STATUS_RETURN) return br;
-            if (br.status == STATUS_THROW) return br;
-            /* STATUS_CONTINUE just proceeds to next iteration */
+            push_scope(it);
+            exec_stmts(it, node->as.while_loop.body, node->as.while_loop.body_count);
+            pop_scope(it);
+
+            if (it->break_flag) { it->break_flag = 0; break; }
+            if (it->return_flag) break;
+            if (it->continue_flag) { it->continue_flag = 0; }
         }
-        return ok_null();
+        break;
     }
 
     case NODE_FOR: {
-        ExecResult ir = exec_node(interp, node->as.for_loop.iterable);
-        if (ir.status != STATUS_OK) return ir;
-        Value *iterable = ir.value;
+        Value iterable = eval_node(it, node->as.for_loop.iterable);
+        if (iterable.type == VAL_ARRAY) {
+            for (int i = 0; i < iterable.as.array.count; i++) {
+                push_scope(it);
+                interp_def_var(it, node->as.for_loop.var, val_copy(iterable.as.array.items[i]));
+                exec_stmts(it, node->as.for_loop.body, node->as.for_loop.body_count);
+                pop_scope(it);
 
-        if (iterable->type == VAL_ARRAY) {
-            for (int i = 0; i < iterable->as.array.length; i++) {
-                table_set(interp->variables, node->as.for_loop.var, iterable->as.array.items[i]);
-                ExecResult br = exec_stmts(interp, node->as.for_loop.body, node->as.for_loop.body_count);
-                if (br.value) value_release(br.value);
-                if (br.status == STATUS_BREAK) break;
-                if (br.status == STATUS_RETURN) { value_release(iterable); return br; }
-                if (br.status == STATUS_THROW) { value_release(iterable); return br; }
+                if (it->break_flag) { it->break_flag = 0; break; }
+                if (it->return_flag) break;
+                if (it->continue_flag) { it->continue_flag = 0; }
             }
-        } else if (iterable->type == VAL_STRING) {
-            int slen = (int)strlen(iterable->as.string);
-            for (int i = 0; i < slen; i++) {
-                char ch[2] = { iterable->as.string[i], '\0' };
-                Value *cv = value_new_string(ch);
-                table_set(interp->variables, node->as.for_loop.var, cv);
-                value_release(cv);
-                ExecResult br = exec_stmts(interp, node->as.for_loop.body, node->as.for_loop.body_count);
-                if (br.value) value_release(br.value);
-                if (br.status == STATUS_BREAK) break;
-                if (br.status == STATUS_RETURN) { value_release(iterable); return br; }
-                if (br.status == STATUS_THROW) { value_release(iterable); return br; }
+        } else if (iterable.type == VAL_STRING) {
+            for (int i = 0; i < iterable.as.string.len; i++) {
+                push_scope(it);
+                interp_def_var(it, node->as.for_loop.var, val_string(iterable.as.string.str + i, 1));
+                exec_stmts(it, node->as.for_loop.body, node->as.for_loop.body_count);
+                pop_scope(it);
+
+                if (it->break_flag) { it->break_flag = 0; break; }
+                if (it->return_flag) break;
+                if (it->continue_flag) { it->continue_flag = 0; }
             }
-        } else if (iterable->type == VAL_OBJECT) {
-            for (int i = 0; i < iterable->as.object.length; i++) {
-                Value *kv = value_new_string(iterable->as.object.keys[i]);
-                table_set(interp->variables, node->as.for_loop.var, kv);
-                value_release(kv);
-                ExecResult br = exec_stmts(interp, node->as.for_loop.body, node->as.for_loop.body_count);
-                if (br.value) value_release(br.value);
-                if (br.status == STATUS_BREAK) break;
-                if (br.status == STATUS_RETURN) { value_release(iterable); return br; }
-                if (br.status == STATUS_THROW) { value_release(iterable); return br; }
+        } else if (iterable.type == VAL_OBJECT) {
+            Value keysArr = table_keys(iterable.as.object);
+            for (int i = 0; i < keysArr.as.array.count; i++) {
+                push_scope(it);
+                interp_def_var(it, node->as.for_loop.var, val_copy(keysArr.as.array.items[i]));
+                exec_stmts(it, node->as.for_loop.body, node->as.for_loop.body_count);
+                pop_scope(it);
+
+                if (it->break_flag) { it->break_flag = 0; break; }
+                if (it->return_flag) break;
+                if (it->continue_flag) { it->continue_flag = 0; }
             }
+            val_free(&keysArr);
         }
-        value_release(iterable);
-        return ok_null();
+        val_free(&iterable);
+        break;
     }
 
-    case NODE_FUNCTION_DEF: {
-        Value *fn = value_new_function(
-            node->as.func_def.name,
-            node->as.func_def.params,
-            node->as.func_def.param_count,
-            node->as.func_def.body,
-            node->as.func_def.body_count
-        );
-        table_set(interp->functions, node->as.func_def.name, fn);
-        value_release(fn);
-        return ok_null();
+    case NODE_FUNC_DEF: {
+        FuncDef *fn = malloc(sizeof(FuncDef));
+        fn->name = strdup(node->as.func_def.name);
+        fn->params = node->as.func_def.params;
+        fn->param_count = node->as.func_def.param_count;
+        fn->body = node->as.func_def.body;
+        fn->body_count = node->as.func_def.body_count;
+        table_set(&it->functions, fn->name, val_func(fn));
+        break;
     }
 
     case NODE_RETURN: {
-        if (node->as.ret.value) {
-            ExecResult r = exec_node(interp, node->as.ret.value);
-            if (r.status != STATUS_OK) return r;
-            ExecResult ret = { STATUS_RETURN, r.value };
-            return ret;
+        if (node->as.return_val) {
+            it->return_value = eval_node(it, node->as.return_val);
+        } else {
+            it->return_value = val_null();
         }
-        return status_only(STATUS_RETURN);
+        it->return_flag = 1;
+        break;
     }
 
     case NODE_BREAK:
-        return status_only(STATUS_BREAK);
+        it->break_flag = 1;
+        break;
 
     case NODE_CONTINUE:
-        return status_only(STATUS_CONTINUE);
+        it->continue_flag = 1;
+        break;
 
-    case NODE_CLASS_DEF: {
-        Value *class_obj = value_new_object();
+    case NODE_CLASS: {
+        Value class_obj = val_object();
         for (int i = 0; i < node->as.class_def.method_count; i++) {
-            ASTNode *m = node->as.class_def.methods[i];
-            Value *fn = value_new_function(
-                m->as.func_def.name,
-                m->as.func_def.params,
-                m->as.func_def.param_count,
-                m->as.func_def.body,
-                m->as.func_def.body_count
-            );
-            value_object_set(class_obj, m->as.func_def.name, fn);
-            value_release(fn);
+            ASTNode *method = node->as.class_def.methods[i];
+            FuncDef *fn = malloc(sizeof(FuncDef));
+            fn->name = strdup(method->as.func_def.name);
+            fn->params = method->as.func_def.params;
+            fn->param_count = method->as.func_def.param_count;
+            fn->body = method->as.func_def.body;
+            fn->body_count = method->as.func_def.body_count;
+            table_set(class_obj.as.object, fn->name, val_func(fn));
         }
-        table_set(interp->classes, node->as.class_def.name, class_obj);
-        value_release(class_obj);
-        return ok_null();
+        table_set(&it->classes, node->as.class_def.name, class_obj);
+        break;
     }
 
     case NODE_TRY_CATCH: {
-        /* Execute try block */
-        ExecResult tr = exec_stmts(interp, node->as.try_catch.try_stmts, node->as.try_catch.try_count);
-        if (tr.status == STATUS_THROW) {
-            /* Caught: bind error to catch variable */
-            if (node->as.try_catch.catch_var && tr.value) {
-                table_set(interp->variables, node->as.try_catch.catch_var, tr.value);
-            }
-            if (tr.value) value_release(tr.value);
-            return exec_stmts(interp, node->as.try_catch.catch_stmts, node->as.try_catch.catch_count);
+        if (it->try_depth >= MAX_TRY_DEPTH) {
+            runtime_error(it, node->line, "too many nested try blocks");
         }
-        return tr;
+
+        int saved_scope = it->scope_depth;
+        it->try_depth++;
+        int caught = 0;
+
+        if (setjmp(it->try_stack[it->try_depth - 1]) == 0) {
+            /* Try block */
+            push_scope(it);
+            exec_stmts(it, node->as.try_catch.try_body, node->as.try_catch.try_count);
+            pop_scope(it);
+        } else {
+            /* Exception caught -- unwind scopes back to saved level */
+            while (it->scope_depth > saved_scope) {
+                pop_scope(it);
+            }
+            caught = 1;
+            it->exception_active = 0;
+            it->return_flag = 0;
+            it->break_flag = 0;
+            it->continue_flag = 0;
+
+            push_scope(it);
+            if (node->as.try_catch.catch_var && it->exception_msg) {
+                int elen = (int)strlen(it->exception_msg);
+                interp_def_var(it, node->as.try_catch.catch_var,
+                               val_string(it->exception_msg, elen));
+            }
+            exec_stmts(it, node->as.try_catch.catch_body, node->as.try_catch.catch_count);
+            pop_scope(it);
+
+            free(it->exception_msg);
+            it->exception_msg = NULL;
+        }
+        it->try_depth--;
+        (void)caught;
+        break;
     }
 
     case NODE_THROW: {
-        ExecResult r = exec_node(interp, node->as.throw_stmt.value);
-        if (r.status != STATUS_OK) return r;
-        ExecResult thr = { STATUS_THROW, r.value };
-        return thr;
+        Value v = eval_node(it, node->as.throw_val);
+        char *s = val_to_string(v);
+        val_free(&v);
+        throw_exception(it, s);
+        free(s); /* unreachable if longjmp fires */
+        break;
     }
 
     case NODE_IMPORT: {
-        const char *path = node->as.import_stmt.path;
+        const char *path = node->as.import_path;
 
-        /* Check already imported */
-        for (int i = 0; i < interp->import_depth; i++) {
-            if (strcmp(interp->import_stack[i], path) == 0)
-                return ok_null();
+        /* Check if already imported */
+        for (int i = 0; i < it->imported_count; i++) {
+            if (strcmp(it->imported[i], path) == 0) return;
         }
-        if (interp->import_depth >= 32)
-            runtime_error(interp, node->line, "too many imports");
+        if (it->imported_count >= MAX_IMPORTED) {
+            runtime_error(it, node->line, "too many imports");
+        }
+        it->imported[it->imported_count++] = strdup(path);
 
-        interp->import_stack[interp->import_depth++] = strdup(path);
-
+        /* Read and execute file */
         FILE *f = fopen(path, "r");
-        if (!f) runtime_error(interp, node->line, "cannot open import '%s'", path);
+        if (!f) {
+            runtime_error(it, node->line, "cannot open import file '%s'", path);
+        }
         fseek(f, 0, SEEK_END);
-        long sz = ftell(f);
-        rewind(f);
-        char *src = malloc(sz + 1);
-        fread(src, 1, sz, f);
-        src[sz] = '\0';
+        long size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        char *src = malloc((size_t)size + 1);
+        size_t nr = fread(src, 1, (size_t)size, f);
+        src[nr] = '\0';
         fclose(f);
 
-        interpreter_run_source(interp, src);
+        interp_run(it, src);
         free(src);
-        return ok_null();
+        break;
     }
 
-    case NODE_PROGRAM:
-        return exec_stmts(interp, node->as.program.stmts, node->as.program.count);
-
-    default:
-        return ok_null();
+    default: {
+        /* Expression statement -- evaluate and discard */
+        Value v = eval_node(it, node);
+        val_free(&v);
+        break;
+    }
     }
 }
 
-/* ---- exec_stmts ---- */
-
-ExecResult exec_stmts(Interpreter *interp, ASTNode **stmts, int count) {
-    ExecResult last = { STATUS_OK, NULL };
+static void exec_stmts(Interpreter *it, ASTNode **stmts, int count) {
     for (int i = 0; i < count; i++) {
-        if (last.value) { value_release(last.value); last.value = NULL; }
-        last = exec_node(interp, stmts[i]);
-        if (last.status != STATUS_OK) return last;
+        if (it->return_flag || it->break_flag || it->continue_flag) break;
+        exec_stmt(it, stmts[i]);
     }
-    if (!last.value) last.value = value_new_null();
-    return last;
 }
 
 /* ---- public API ---- */
 
-void interpreter_init(Interpreter *interp) {
-    memset(interp, 0, sizeof(Interpreter));
-    interp->variables = table_new();
-    interp->functions = table_new();
-    interp->classes = table_new();
-    interp->current_instance = NULL;
-    interp->call_depth = 0;
-    interp->import_depth = 0;
+void interp_init(Interpreter *it) {
+    memset(it, 0, sizeof(Interpreter));
+    it->scope_depth = 0;
+    table_init(&it->scopes[0].vars);
+    table_init(&it->globals);
+    table_init(&it->functions);
+    table_init(&it->builtins);
+    table_init(&it->classes);
+    it->this_obj = NULL;
+    it->call_depth = 0;
+    it->imported_count = 0;
+    it->break_flag = 0;
+    it->continue_flag = 0;
+    it->return_flag = 0;
+    it->return_value = val_null();
+    it->try_depth = 0;
+    it->exception_msg = NULL;
+    it->exception_active = 0;
+    builtins_register(it);
 }
 
-void interpreter_free(Interpreter *interp) {
-    table_free(interp->variables);
-    table_free(interp->functions);
-    table_free(interp->classes);
-    for (int i = 0; i < interp->import_depth; i++) {
-        free(interp->import_stack[i]);
+void interp_free(Interpreter *it) {
+    for (int i = it->scope_depth; i >= 0; i--) {
+        table_free(&it->scopes[i].vars);
     }
+    table_free(&it->globals);
+    table_free(&it->functions);
+    table_free(&it->builtins);
+    table_free(&it->classes);
+    for (int i = 0; i < it->imported_count; i++) {
+        free(it->imported[i]);
+    }
+    val_free(&it->return_value);
+    free(it->exception_msg);
+    it->exception_msg = NULL;
 }
 
-int interpreter_run_source(Interpreter *interp, const char *source) {
+Value interp_eval(Interpreter *it, ASTNode *node) {
+    return eval_node(it, node);
+}
+
+void interp_exec(Interpreter *it, ASTNode **stmts, int count) {
+    exec_stmts(it, stmts, count);
+}
+
+void interp_run(Interpreter *it, const char *source) {
     Lexer lex;
     lexer_init(&lex, source);
     lexer_tokenize(&lex);
 
     Parser parser;
-    parser_init(&parser, lex.tokens, lex.count);
+    parser_init(&parser, lex.tokens, lex.token_count);
     ASTNode *program = parser_parse(&parser);
 
-    if (program) {
-        ExecResult r = exec_node(interp, program);
-        if (r.value) value_release(r.value);
-        ast_free(program);
+    if (program && program->type == NODE_PROGRAM) {
+        exec_stmts(it, program->as.program.stmts, program->as.program.count);
     }
 
+    ast_free(program);
     lexer_free(&lex);
-    return 0;
-}
-
-void interpreter_repl(Interpreter *interp) {
-    printf("jung v0.1.0\n");
-    printf("Type expressions or statements. Ctrl-D to exit.\n");
-
-    char line[4096];
-    while (1) {
-        printf("jung> ");
-        fflush(stdout);
-        if (!fgets(line, sizeof(line), stdin)) {
-            printf("\n");
-            break;
-        }
-        int len = (int)strlen(line);
-        if (len > 0 && line[len - 1] == '\n') line[--len] = '\0';
-        if (len == 0) continue;
-
-        Lexer lex;
-        lexer_init(&lex, line);
-        lexer_tokenize(&lex);
-
-        Parser parser;
-        parser_init(&parser, lex.tokens, lex.count);
-        ASTNode *program = parser_parse(&parser);
-
-        if (program && program->type == NODE_PROGRAM && program->as.program.count > 0) {
-            if (program->as.program.count == 1) {
-                ASTNode *stmt = program->as.program.stmts[0];
-                if (stmt->type == NODE_PRINT || stmt->type == NODE_ASSIGNMENT ||
-                    stmt->type == NODE_IF || stmt->type == NODE_WHILE ||
-                    stmt->type == NODE_FOR || stmt->type == NODE_FUNCTION_DEF ||
-                    stmt->type == NODE_CLASS_DEF || stmt->type == NODE_IMPORT ||
-                    stmt->type == NODE_COMPOUND_ASSIGN || stmt->type == NODE_DOT_ASSIGN) {
-                    ExecResult r = exec_node(interp, stmt);
-                    if (r.value) value_release(r.value);
-                } else {
-                    ExecResult r = exec_node(interp, stmt);
-                    if (r.status == STATUS_OK && r.value && r.value->type != VAL_NULL) {
-                        char *s = value_to_string(r.value);
-                        printf("%s\n", s);
-                        free(s);
-                    }
-                    if (r.value) value_release(r.value);
-                }
-            } else {
-                ExecResult r = exec_stmts(interp, program->as.program.stmts, program->as.program.count);
-                if (r.value) value_release(r.value);
-            }
-        }
-
-        ast_free(program);
-        lexer_free(&lex);
-    }
 }
