@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>jung -- a programming language for the collective unconscious</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,700;0,9..144,900;1,9..144,300;1,9..144,400&family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #0c1a12;
+            --bg-elevated: #0f2118;
+            --bg-card: #112a1b;
+            --green: #3d9e6a;
+            --green-dim: #2a7a50;
+            --amber: #d4a843;
+            --amber-dim: #b08a30;
+            --cream: #e8e4da;
+            --muted: #8a9e90;
+            --muted-dim: #5a6e60;
+            --red: #c45c5c;
+            --code-bg: #081410;
+            --code-border: #1a3a28;
+        }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg);
+            color: var(--cream);
+            line-height: 1.6;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* -- noise overlay -- */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            pointer-events: none;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+            background-repeat: repeat;
+            background-size: 256px 256px;
+        }
+
+        /* -- layout -- */
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 0 clamp(1.25rem, 4vw, 2.5rem);
+        }
+
+        section {
+            padding: clamp(3rem, 8vw, 6rem) 0;
+        }
+
+        .section-label {
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--green);
+            margin-bottom: 1.5rem;
+            display: block;
+        }
+
+        h1, h2, h3, h4 {
+            font-family: 'Fraunces', serif;
+            font-weight: 700;
+            line-height: 1.15;
+        }
+
+        h2 {
+            font-size: clamp(1.75rem, 4vw, 2.5rem);
+            color: var(--cream);
+            margin-bottom: 1rem;
+        }
+
+        h3 {
+            font-size: clamp(1.1rem, 2vw, 1.35rem);
+            color: var(--cream);
+            margin-bottom: 0.75rem;
+        }
+
+        p {
+            color: var(--muted);
+            max-width: 640px;
+        }
+
+        a {
+            color: var(--green);
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }
+        a:hover { color: var(--amber); }
+
+        /* -- hero -- */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            position: relative;
+            padding: 4rem 1.5rem;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            width: clamp(400px, 60vw, 700px);
+            height: clamp(400px, 60vw, 700px);
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(61, 158, 106, 0.12) 0%, rgba(61, 158, 106, 0.03) 50%, transparent 70%);
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .hero > * { position: relative; z-index: 1; }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 1rem;
+            border: 1px solid var(--code-border);
+            border-radius: 100px;
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 2rem;
+            background: var(--bg-elevated);
+        }
+
+        .hero-badge .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .hero h1 {
+            font-size: clamp(3.5rem, 12vw, 8rem);
+            font-weight: 900;
+            letter-spacing: -0.03em;
+            color: var(--cream);
+            margin-bottom: 1.25rem;
+            font-family: 'Fraunces', serif;
+        }
+
+        .hero h1 .accent {
+            color: var(--green);
+        }
+
+        .hero-tagline {
+            font-size: clamp(1rem, 2.5vw, 1.35rem);
+            color: var(--muted);
+            max-width: 540px;
+            margin: 0 auto 2.5rem;
+            font-style: italic;
+            font-family: 'Fraunces', serif;
+            font-weight: 300;
+        }
+
+        .hero-actions {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-bottom: 3.5rem;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.75rem;
+            border-radius: 100px;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease, color 0.2s ease;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn-primary {
+            background: var(--cream);
+            color: var(--bg);
+        }
+        .btn-primary:hover {
+            background: var(--amber);
+            color: var(--bg);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--cream);
+            border: 1px solid var(--muted-dim);
+        }
+        .btn-ghost:hover {
+            border-color: var(--green);
+            color: var(--green);
+        }
+
+        .hero-quote {
+            font-family: 'Fraunces', serif;
+            font-style: italic;
+            font-weight: 300;
+            font-size: clamp(0.85rem, 1.8vw, 1rem);
+            color: var(--muted-dim);
+            max-width: 520px;
+            line-height: 1.5;
+        }
+
+        .hero-quote cite {
+            display: block;
+            margin-top: 0.5rem;
+            font-style: normal;
+            color: var(--muted);
+            font-size: 0.8em;
+        }
+
+        /* -- keyword table -- */
+        .keyword-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 2px;
+            margin-top: 2rem;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .keyword-item {
+            display: flex;
+            align-items: baseline;
+            gap: 1rem;
+            padding: 1rem 1.25rem;
+            background: var(--bg-elevated);
+            transition: background 0.2s ease;
+        }
+
+        .keyword-item:hover {
+            background: var(--bg-card);
+        }
+
+        .keyword-item .kw-jung {
+            font-family: 'DM Mono', monospace;
+            font-weight: 500;
+            color: var(--green);
+            min-width: 110px;
+            font-size: 0.9rem;
+        }
+
+        .keyword-item .kw-arrow {
+            color: var(--muted-dim);
+            font-size: 0.75rem;
+        }
+
+        .keyword-item .kw-std {
+            font-family: 'DM Mono', monospace;
+            color: var(--muted);
+            font-size: 0.85rem;
+            min-width: 50px;
+        }
+
+        .keyword-item .kw-desc {
+            color: var(--muted-dim);
+            font-size: 0.8rem;
+            margin-left: auto;
+        }
+
+        /* first row top corners, last row bottom corners */
+        .keyword-item:first-child { border-top-left-radius: 12px; }
+        .keyword-item:nth-child(2) { border-top-right-radius: 12px; }
+        .keyword-item:nth-last-child(2) { border-bottom-left-radius: 12px; }
+        .keyword-item:last-child { border-bottom-right-radius: 12px; }
+
+        /* -- code blocks -- */
+        .code-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        @media (min-width: 640px) {
+            .code-grid { grid-template-columns: 1fr 1fr; }
+            .code-grid .code-block:first-child { grid-column: 1 / -1; }
+        }
+
+        .code-block {
+            background: var(--code-bg);
+            border: 1px solid var(--code-border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .code-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--code-border);
+            font-size: 0.75rem;
+            color: var(--muted-dim);
+            font-family: 'DM Mono', monospace;
+        }
+
+        .code-header .dots {
+            display: flex;
+            gap: 5px;
+        }
+
+        .code-header .dots span {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--muted-dim);
+            opacity: 0.4;
+        }
+
+        .code-header .filename {
+            margin-left: auto;
+        }
+
+        .code-block pre {
+            padding: 1.25rem;
+            font-family: 'DM Mono', monospace;
+            font-size: 0.82rem;
+            line-height: 1.7;
+            overflow-x: auto;
+            color: var(--cream);
+        }
+
+        /* syntax colors */
+        .kw { color: var(--green); }
+        .str { color: var(--amber); }
+        .cm { color: var(--muted-dim); font-style: italic; }
+        .fn { color: #7ec8a4; }
+        .num { color: #c9a0dc; }
+        .op { color: var(--muted); }
+        .self { color: var(--amber); font-style: italic; }
+
+        /* -- features -- */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 2px;
+            margin-top: 2rem;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .feature-card {
+            padding: 1.5rem;
+            background: var(--bg-elevated);
+            transition: background 0.2s ease;
+        }
+
+        .feature-card:hover {
+            background: var(--bg-card);
+        }
+
+        .feature-card:first-child { border-top-left-radius: 12px; }
+        .feature-card:nth-child(3) { border-top-right-radius: 12px; }
+        .feature-card:nth-last-child(3) { border-bottom-left-radius: 12px; }
+        .feature-card:last-child { border-bottom-right-radius: 12px; }
+
+        .feature-card .feature-icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.75rem;
+            display: block;
+            color: var(--green);
+            font-family: 'DM Mono', monospace;
+        }
+
+        .feature-card h3 {
+            font-size: 1rem;
+            margin-bottom: 0.4rem;
+        }
+
+        .feature-card p {
+            font-size: 0.85rem;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        /* -- architecture -- */
+        .arch-container {
+            margin-top: 2rem;
+            border: 1px solid var(--code-border);
+            border-radius: 12px;
+            overflow: hidden;
+            background: var(--code-bg);
+            padding: 2rem;
+        }
+
+        .arch-container svg {
+            width: 100%;
+            height: auto;
+        }
+
+        .arch-stats {
+            display: flex;
+            gap: 2rem;
+            flex-wrap: wrap;
+            margin-top: 2rem;
+        }
+
+        .stat {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stat-value {
+            font-family: 'Fraunces', serif;
+            font-size: clamp(1.5rem, 3vw, 2rem);
+            font-weight: 700;
+            color: var(--cream);
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--muted-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        /* -- pipeline steps -- */
+        .pipeline {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            margin-top: 2rem;
+            border-left: 2px solid var(--code-border);
+            padding-left: 2rem;
+        }
+
+        .pipeline-step {
+            position: relative;
+            padding: 1.25rem 0;
+        }
+
+        .pipeline-step::before {
+            content: '';
+            position: absolute;
+            left: calc(-2rem - 5px);
+            top: 1.6rem;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+            border: 2px solid var(--bg);
+        }
+
+        .pipeline-step .step-num {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--green);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.25rem;
+        }
+
+        .pipeline-step h3 {
+            margin-bottom: 0.3rem;
+        }
+
+        .pipeline-step .step-file {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--amber);
+        }
+
+        .pipeline-step p {
+            font-size: 0.9rem;
+            margin-top: 0.3rem;
+        }
+
+        /* -- footer -- */
+        footer {
+            border-top: 1px solid var(--code-border);
+            padding: 2.5rem 0;
+            text-align: center;
+        }
+
+        footer p {
+            font-size: 0.8rem;
+            color: var(--muted-dim);
+            max-width: none;
+            margin: 0 auto;
+        }
+
+        footer a {
+            color: var(--muted);
+        }
+        footer a:hover { color: var(--green); }
+
+        /* -- divider -- */
+        .divider {
+            width: 40px;
+            height: 2px;
+            background: var(--code-border);
+            margin: 0 auto;
+        }
+
+        /* -- responsive -- */
+        @media (max-width: 640px) {
+            .keyword-grid { grid-template-columns: 1fr; }
+            .keyword-item .kw-desc { display: none; }
+            .feature-grid { grid-template-columns: 1fr; }
+            .feature-card:first-child { border-top-right-radius: 12px; }
+            .feature-card:nth-child(3) { border-top-right-radius: 0; }
+            .feature-card:nth-last-child(3) { border-bottom-left-radius: 0; }
+            .feature-card:last-child { border-bottom-left-radius: 12px; }
+            .arch-stats { gap: 1.5rem; }
+            .hero h1 { letter-spacing: -0.02em; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ====== HERO ====== -->
+<section class="hero">
+    <div class="hero-badge">
+        <span class="dot"></span>
+        C99 &middot; zero dependencies &middot; ~4100 LOC
+    </div>
+
+    <h1 data-aos="fade-up" data-aos-duration="800">j<span class="accent">u</span>ng</h1>
+
+    <p class="hero-tagline" data-aos="fade-up" data-aos-delay="100" data-aos-duration="800">
+        A programming language for the collective unconscious
+    </p>
+
+    <div class="hero-actions" data-aos="fade-up" data-aos-delay="200" data-aos-duration="800">
+        <a href="https://github.com/nulljosh/jung" class="btn btn-primary">View on GitHub</a>
+        <a href="#examples" class="btn btn-ghost">See examples</a>
+    </div>
+
+    <blockquote class="hero-quote" data-aos="fade-up" data-aos-delay="350" data-aos-duration="800">
+        "Until you make the unconscious conscious, it will direct your life and you will call it fate."
+        <cite>Carl Jung</cite>
+    </blockquote>
+</section>
+
+<!-- ====== KEYWORDS ====== -->
+<section id="keywords">
+    <div class="container">
+        <span class="section-label" data-aos="fade-up">Language</span>
+        <h2 data-aos="fade-up" data-aos-delay="50">Keyword Mapping</h2>
+        <p data-aos="fade-up" data-aos-delay="100">Every programming concept maps to Jungian analytical psychology. Both Jungian and standard keywords work interchangeably.</p>
+
+        <div class="keyword-grid" data-aos="fade-up" data-aos-delay="150">
+            <div class="keyword-item">
+                <span class="kw-jung">perceive</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">let</span>
+                <span class="kw-desc">Become aware of a value</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">dream</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">fn</span>
+                <span class="kw-desc">Message from the unconscious</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">archetype</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">class</span>
+                <span class="kw-desc">Define a universal pattern</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">emerge</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">new</span>
+                <span class="kw-desc">Arise from the unconscious</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">Self</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">this</span>
+                <span class="kw-desc">The unified whole</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">project</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">print</span>
+                <span class="kw-desc">Express to the outside world</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">manifest</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">return</span>
+                <span class="kw-desc">Make conscious</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">unconscious</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">null</span>
+                <span class="kw-desc">The unknown</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">confront</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">try</span>
+                <span class="kw-desc">Face the shadow</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">embrace</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">catch</span>
+                <span class="kw-desc">Accept what you find</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">reject</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">throw</span>
+                <span class="kw-desc">Cast into the unconscious</span>
+            </div>
+            <div class="keyword-item">
+                <span class="kw-jung">integrate</span>
+                <span class="kw-arrow">&rarr;</span>
+                <span class="kw-std">import</span>
+                <span class="kw-desc">Absorb external wisdom</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="container"><div class="divider"></div></div>
+
+<!-- ====== EXAMPLES ====== -->
+<section id="examples">
+    <div class="container">
+        <span class="section-label" data-aos="fade-up">Examples</span>
+        <h2 data-aos="fade-up" data-aos-delay="50">Code as Psychology</h2>
+        <p data-aos="fade-up" data-aos-delay="100">Three examples showing functions, classes, and error handling through the lens of analytical psychology.</p>
+
+        <div class="code-grid">
+            <!-- Example 1: Dreams -->
+            <div class="code-block" data-aos="fade-up" data-aos-delay="150">
+                <div class="code-header">
+                    <div class="dots"><span></span><span></span><span></span></div>
+                    <span class="filename">hello.jung</span>
+                </div>
+<pre><span class="cm"># The individuation process begins here</span>
+
+<span class="kw">dream</span> <span class="fn">greet</span>(name) {
+    <span class="kw">project</span> <span class="str">"Hello, "</span> <span class="op">+</span> name
+}
+
+<span class="fn">greet</span>(<span class="str">"World"</span>)
+<span class="kw">project</span> <span class="str">"The journey of individuation begins."</span></pre>
+            </div>
+
+            <!-- Example 2: Archetypes -->
+            <div class="code-block" data-aos="fade-up" data-aos-delay="200">
+                <div class="code-header">
+                    <div class="dots"><span></span><span></span><span></span></div>
+                    <span class="filename">archetypes.jung</span>
+                </div>
+<pre><span class="kw">archetype</span> <span class="fn">Shadow</span> {
+    <span class="kw">fn</span> <span class="fn">init</span>(name) {
+        <span class="self">Self</span>.name <span class="op">=</span> name
+        <span class="self">Self</span>.repressed <span class="op">=</span> []
+    }
+
+    <span class="kw">fn</span> <span class="fn">repress</span>(memory) {
+        <span class="self">Self</span>.repressed.<span class="fn">push</span>(memory)
+        <span class="kw">project</span> <span class="self">Self</span>.name <span class="op">+</span> <span class="str">" represses: "</span> <span class="op">+</span> memory
+    }
+}
+
+<span class="kw">perceive</span> shadow <span class="op">=</span> <span class="kw">emerge</span> <span class="fn">Shadow</span>(<span class="str">"The Unconscious"</span>)
+shadow.<span class="fn">repress</span>(<span class="str">"childhood fear"</span>)
+shadow.<span class="fn">repress</span>(<span class="str">"hidden desire"</span>)</pre>
+            </div>
+
+            <!-- Example 3: Error handling -->
+            <div class="code-block" data-aos="fade-up" data-aos-delay="250">
+                <div class="code-header">
+                    <div class="dots"><span></span><span></span><span></span></div>
+                    <span class="filename">error_handling.jung</span>
+                </div>
+<pre><span class="kw">dream</span> <span class="fn">divide</span>(a, b) {
+    <span class="kw">if</span> b <span class="op">==</span> <span class="num">0</span> {
+        <span class="kw">reject</span> <span class="str">"Cannot divide by the void"</span>
+    }
+    <span class="kw">manifest</span> a <span class="op">/</span> b
+}
+
+<span class="kw">confront</span> {
+    <span class="kw">project</span> <span class="fn">divide</span>(<span class="num">10</span>, <span class="num">2</span>)
+    <span class="kw">project</span> <span class="fn">divide</span>(<span class="num">10</span>, <span class="num">0</span>)
+} <span class="kw">embrace</span> (e) {
+    <span class="kw">project</span> <span class="str">"Shadow encountered: "</span> <span class="op">+</span> e
+}</pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="container"><div class="divider"></div></div>
+
+<!-- ====== FEATURES ====== -->
+<section id="features">
+    <div class="container">
+        <span class="section-label" data-aos="fade-up">Capabilities</span>
+        <h2 data-aos="fade-up" data-aos-delay="50">Features</h2>
+
+        <div class="feature-grid" data-aos="fade-up" data-aos-delay="100">
+            <div class="feature-card">
+                <span class="feature-icon">fn</span>
+                <h3>First-class Functions</h3>
+                <p>Closures, recursion, default parameters. Functions are values.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">{}</span>
+                <h3>Classes and Objects</h3>
+                <p>Constructors, methods, Self property access. Archetypes as templates.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">[]</span>
+                <h3>Rich Data Structures</h3>
+                <p>Arrays, objects, string interpolation. Built-in methods for each type.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">!</span>
+                <h3>Error Handling</h3>
+                <p>try/catch/throw with nested propagation via setjmp/longjmp.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">${}</span>
+                <h3>String Interpolation</h3>
+                <p>Embed expressions directly in strings with ${expression} syntax.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">#</span>
+                <h3>Builtins</h3>
+                <p>len, range, split, join, slice, sort, reverse, math, type introspection.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">io</span>
+                <h3>File I/O</h3>
+                <p>readFile, writeFile, appendFile. Read and write from the filesystem.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&gt;_</span>
+                <h3>Interactive REPL</h3>
+                <p>Run jung with no arguments for an interactive session.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">0</span>
+                <h3>Zero Dependencies</h3>
+                <p>Pure C99. No libraries. No package manager. Just make and run.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="container"><div class="divider"></div></div>
+
+<!-- ====== ARCHITECTURE ====== -->
+<section id="architecture">
+    <div class="container">
+        <span class="section-label" data-aos="fade-up">Internals</span>
+        <h2 data-aos="fade-up" data-aos-delay="50">Architecture</h2>
+        <p data-aos="fade-up" data-aos-delay="100">A three-stage pipeline: source text enters the lexer, becomes tokens, flows through the parser into an AST, and is evaluated by a tree-walking interpreter.</p>
+
+        <div class="arch-container" data-aos="fade-up" data-aos-delay="150">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" font-family="'DM Mono', 'SF Mono', 'Menlo', monospace">
+                <rect width="800" height="300" fill="#081410" rx="8"/>
+                <defs>
+                    <marker id="a" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                        <path d="M0,0 L8,3 L0,6" fill="none" stroke="#3d9e6a" stroke-width="1"/>
+                    </marker>
+                    <marker id="b" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                        <path d="M0,0 L8,3 L0,6" fill="none" stroke="#d4a843" stroke-width="1"/>
+                    </marker>
+                </defs>
+                <rect x="40" y="80" width="100" height="56" rx="6" fill="none" stroke="#3d9e6a" stroke-width="1.5"/>
+                <text x="90" y="105" text-anchor="middle" fill="#e8e4da" font-size="13">.jung</text>
+                <text x="90" y="122" text-anchor="middle" fill="#8a9e90" font-size="9">source</text>
+                <line x1="140" y1="108" x2="178" y2="108" stroke="#3d9e6a" stroke-width="1.5" marker-end="url(#a)"/>
+                <rect x="180" y="80" width="110" height="56" rx="6" fill="none" stroke="#3d9e6a" stroke-width="1.5"/>
+                <text x="235" y="105" text-anchor="middle" fill="#e8e4da" font-size="13">Lexer</text>
+                <text x="235" y="122" text-anchor="middle" fill="#8a9e90" font-size="9">lexer.c</text>
+                <line x1="290" y1="108" x2="328" y2="108" stroke="#3d9e6a" stroke-width="1.5" marker-end="url(#a)"/>
+                <rect x="330" y="80" width="110" height="56" rx="6" fill="none" stroke="#3d9e6a" stroke-width="1.5"/>
+                <text x="385" y="105" text-anchor="middle" fill="#e8e4da" font-size="13">Parser</text>
+                <text x="385" y="122" text-anchor="middle" fill="#8a9e90" font-size="9">parser.c</text>
+                <line x1="440" y1="108" x2="478" y2="108" stroke="#3d9e6a" stroke-width="1.5" marker-end="url(#a)"/>
+                <rect x="480" y="80" width="90" height="56" rx="6" fill="none" stroke="#d4a843" stroke-width="1.5"/>
+                <text x="525" y="105" text-anchor="middle" fill="#e8e4da" font-size="13">AST</text>
+                <text x="525" y="122" text-anchor="middle" fill="#8a9e90" font-size="9">tree</text>
+                <line x1="570" y1="108" x2="608" y2="108" stroke="#3d9e6a" stroke-width="1.5" marker-end="url(#a)"/>
+                <rect x="610" y="80" width="150" height="56" rx="6" fill="none" stroke="#3d9e6a" stroke-width="1.5"/>
+                <text x="685" y="105" text-anchor="middle" fill="#e8e4da" font-size="13">Interpreter</text>
+                <text x="685" y="122" text-anchor="middle" fill="#8a9e90" font-size="9">interpreter.c</text>
+                <line x1="685" y1="136" x2="685" y2="174" stroke="#3d9e6a" stroke-width="1.5" marker-end="url(#a)"/>
+                <rect x="635" y="176" width="100" height="44" rx="6" fill="none" stroke="#3d9e6a" stroke-width="1.5"/>
+                <text x="685" y="203" text-anchor="middle" fill="#e8e4da" font-size="12">Output</text>
+                <rect x="40" y="180" width="140" height="70" rx="6" fill="none" stroke="#d4a843" stroke-width="1.5" stroke-dasharray="6,3"/>
+                <text x="110" y="208" text-anchor="middle" fill="#d4a843" font-size="12">Values</text>
+                <text x="110" y="228" text-anchor="middle" fill="#8a9e90" font-size="9">value.c + table.c</text>
+                <rect x="210" y="180" width="140" height="70" rx="6" fill="none" stroke="#d4a843" stroke-width="1.5" stroke-dasharray="6,3"/>
+                <text x="280" y="208" text-anchor="middle" fill="#d4a843" font-size="12">Builtins</text>
+                <text x="280" y="228" text-anchor="middle" fill="#8a9e90" font-size="9">builtins.c</text>
+                <rect x="380" y="180" width="140" height="70" rx="6" fill="none" stroke="#d4a843" stroke-width="1.5" stroke-dasharray="6,3"/>
+                <text x="450" y="208" text-anchor="middle" fill="#d4a843" font-size="12">Exceptions</text>
+                <text x="450" y="228" text-anchor="middle" fill="#8a9e90" font-size="9">setjmp/longjmp</text>
+                <line x1="110" y1="180" x2="640" y2="136" stroke="#d4a843" stroke-width="1" stroke-dasharray="4,4"/>
+                <line x1="280" y1="180" x2="660" y2="136" stroke="#d4a843" stroke-width="1" stroke-dasharray="4,4"/>
+                <line x1="450" y1="180" x2="680" y2="136" stroke="#d4a843" stroke-width="1" stroke-dasharray="4,4"/>
+                <text x="400" y="280" text-anchor="middle" fill="#8a9e90" font-size="10">C99 -- tree-walking interpreter -- zero dependencies</text>
+            </svg>
+        </div>
+
+        <div class="pipeline" data-aos="fade-up" data-aos-delay="200">
+            <div class="pipeline-step">
+                <div class="step-num">Stage 1</div>
+                <h3>Lexer</h3>
+                <span class="step-file">lexer.c</span>
+                <p>Tokenizes source into a flat stream. Handles both Jungian and standard keywords, string interpolation, and all operators.</p>
+            </div>
+            <div class="pipeline-step">
+                <div class="step-num">Stage 2</div>
+                <h3>Parser</h3>
+                <span class="step-file">parser.c</span>
+                <p>Recursive descent parser. Builds a typed AST with nodes for expressions, statements, classes, and control flow.</p>
+            </div>
+            <div class="pipeline-step">
+                <div class="step-num">Stage 3</div>
+                <h3>Interpreter</h3>
+                <span class="step-file">interpreter.c</span>
+                <p>Tree-walking evaluator. Hash table-based scoping, reference-counted values, setjmp/longjmp exception handling.</p>
+            </div>
+        </div>
+
+        <div class="arch-stats" data-aos="fade-up" data-aos-delay="250">
+            <div class="stat">
+                <span class="stat-value">~4,100</span>
+                <span class="stat-label">Lines of C99</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value">0</span>
+                <span class="stat-label">Dependencies</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value">8</span>
+                <span class="stat-label">Test suites</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value">87 KB</span>
+                <span class="stat-label">Binary size</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ====== FOOTER ====== -->
+<footer>
+    <div class="container">
+        <p>
+            <a href="https://github.com/nulljosh/jung">GitHub</a>
+            &nbsp;&middot;&nbsp;
+            MIT License &copy; 2026 Joshua Trommel
+        </p>
+    </div>
+</footer>
+
+<script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+<script>
+    AOS.init({
+        once: true,
+        duration: 600,
+        easing: 'ease-out-cubic',
+        offset: 60
+    });
+</script>
+</body>
+</html>
