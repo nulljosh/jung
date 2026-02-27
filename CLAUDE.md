@@ -1,18 +1,18 @@
-# jung — Claude Notes
+# Jung Language
 
-## Overview
-TODO: Add project overview.
+## What
+Jungian programming language. Bytecode VM, C99, zero deps.
+Based on jot engine.
 
-## Dev
-```bash
-cd ~/Documents/Code/jung
-# add dev command
-```
+## Build
+make clean && make
 
-## Deploy
-```bash
-git push origin main
-```
+## Style
+- C99 strict
+- snake_case everything
+- No dynamic allocation outside GC
+- Keep total LOC under 5000
 
-## Status
-In development.
+## Keywords
+See README.md keyword table. Phase 1 = scaffold only.
+Full keyword wiring is Phase 2 work.

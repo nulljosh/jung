@@ -1,0 +1,8 @@
+// The individuation process begins here
+
+dream greet(name) {
+    project "Hello, " + name;
+}
+
+greet("World");
+project "The journey begins.";
