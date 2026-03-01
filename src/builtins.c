@@ -59,7 +59,12 @@ static Value bi_range(Value *args, int argc) {
 static Value bi_int(Value *args, int argc) {
     if (argc < 1) return val_number(0);
     if (args[0].type == VAL_NUMBER) return val_number(floor(args[0].as.number));
-    if (args[0].type == VAL_STRING) return val_number(atof(args[0].as.string.str));
+    if (args[0].type == VAL_STRING) {
+        char *end;
+        double val = strtod(args[0].as.string.str, &end);
+        if (end == args[0].as.string.str) return val_number(0);
+        return val_number(val);
+    }
     if (args[0].type == VAL_BOOL) return val_number(args[0].as.boolean);
     return val_number(0);
 }
@@ -68,7 +73,12 @@ static Value bi_int(Value *args, int argc) {
 static Value bi_float(Value *args, int argc) {
     if (argc < 1) return val_number(0);
     if (args[0].type == VAL_NUMBER) return val_number(args[0].as.number);
-    if (args[0].type == VAL_STRING) return val_number(atof(args[0].as.string.str));
+    if (args[0].type == VAL_STRING) {
+        char *end;
+        double val = strtod(args[0].as.string.str, &end);
+        if (end == args[0].as.string.str) return val_number(0);
+        return val_number(val);
+    }
     return val_number(0);
 }
 
@@ -537,7 +547,12 @@ static Value bi_toString(Value *args, int argc) {
 static Value bi_number(Value *args, int argc) {
     if (argc < 1) return val_number(0);
     if (args[0].type == VAL_NUMBER) return args[0];
-    if (args[0].type == VAL_STRING) return val_number(atof(args[0].as.string.str));
+    if (args[0].type == VAL_STRING) {
+        char *end;
+        double val = strtod(args[0].as.string.str, &end);
+        if (end == args[0].as.string.str) return val_number(0);
+        return val_number(val);
+    }
     if (args[0].type == VAL_BOOL) return val_number(args[0].as.boolean);
     return val_number(0);
 }
